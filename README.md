@@ -147,7 +147,7 @@ DATABASE_URL="sqlite+aiosqlite:///./test.db" python launcher.py
 - [x] CNN training with warm-start chain
 - [x] Publication-quality figure export
 - [x] System tray + auto-open browser
-- [ ] PyInstaller one-file bundle (no Python install required)
+- [x] PyInstaller one-folder bundle (no Python install required) — see [docs/BUILD.md](docs/BUILD.md)
 - [ ] Auto-update channel
 - [ ] Optional license-gated features
 

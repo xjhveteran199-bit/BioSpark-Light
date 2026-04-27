@@ -16,6 +16,8 @@ env/
 build/
 dist/
 *.spec
+# …but our hand-tuned spec IS part of the repo
+!biospark-light.spec
 
 # IDE
 .vscode/

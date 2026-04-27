@@ -12,6 +12,7 @@ Resolved layout (Windows example):
     checkpoints\<uid>\   # Per-user warm-start chain (.pt files)
 """
 
+import sys
 from pathlib import Path
 
 from platformdirs import user_data_dir
@@ -26,8 +27,19 @@ APP_NAME = "BioSpark-Light"
 USER_DATA_DIR = Path(user_data_dir(APP_NAME, appauthor=False))
 USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# Source-tree dirs (read-only at runtime)
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Source-tree dirs (read-only at runtime).
+#
+# Two cases:
+#   * Source: __file__ = .../BioSpark-Light/backend/config.py
+#                 → BASE_DIR = .../BioSpark-Light
+#                 → frontend at BASE_DIR / "frontend"
+#   * PyInstaller frozen (one-folder): everything bundled under sys._MEIPASS,
+#                 with the spec's `datas` having added frontend → "frontend".
+#                 → frontend at sys._MEIPASS / "frontend"
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    BASE_DIR = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 
 # Writable dirs (per-user)
