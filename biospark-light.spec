@@ -60,6 +60,7 @@ extra_hidden = [
     "backend.services.dataset_loader",
     "backend.services.dataset_cache",
     "backend.services.auto_optimizer",
+    "backend.services.publication_figures",
     "backend.models.training_history",
 ]
 
