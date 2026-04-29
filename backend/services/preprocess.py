@@ -78,24 +78,47 @@ def _normalize(signal: np.ndarray) -> np.ndarray:
     return (signal - np.mean(signal)) / std
 
 
-def _segment(signal: np.ndarray, segment_length: int, overlap: float = 0.0) -> list[np.ndarray]:
-    """Split signal into fixed-length segments.
+def _segment(
+    signal: np.ndarray,
+    segment_length: int,
+    overlap: float = 0.0,
+    stride: Optional[int] = None,
+) -> list[np.ndarray]:
+    """Split a signal into fixed-length segments.
+
+    Works for 1-D signals (shape ``(T,)``) and multi-channel signals
+    (shape ``(T, C)``). Output preserves the leading channel axis.
 
     Args:
-        signal: 1D array
-        segment_length: number of samples per segment
-        overlap: fraction of overlap between segments (0.0 - 0.9)
+        signal: 1-D array ``(T,)`` or 2-D array ``(T, C)``.
+        segment_length: number of samples per segment along the time axis.
+        overlap: fraction of overlap between segments (0.0–0.9).
+            Ignored when ``stride`` is supplied explicitly.
+        stride: explicit hop in samples between segment starts. When
+            given, overrides ``overlap``. Useful for protocols where the
+            valid window is shorter than the inter-trial period
+            (e.g. OpenBCI EMG: 1 s window every 5 s → stride = 5*sr).
     """
-    step = max(1, int(segment_length * (1 - overlap)))
+    if stride is None:
+        step = max(1, int(segment_length * (1 - overlap)))
+    else:
+        step = max(1, int(stride))
+
+    n = len(signal)
     segments = []
-    for start in range(0, len(signal) - segment_length + 1, step):
+    for start in range(0, n - segment_length + 1, step):
         seg = signal[start:start + segment_length]
         segments.append(seg)
 
-    # If no complete segments, pad the signal
-    if not segments and len(signal) > 0:
-        padded = np.zeros(segment_length)
-        padded[:len(signal)] = signal
+    # If no complete segments fit, pad once to the segment length so
+    # downstream code always gets at least one row.
+    if not segments and n > 0:
+        if signal.ndim == 1:
+            padded = np.zeros(segment_length, dtype=signal.dtype)
+            padded[:n] = signal
+        else:
+            padded = np.zeros((segment_length, signal.shape[1]), dtype=signal.dtype)
+            padded[:n] = signal
         segments.append(padded)
 
     return segments

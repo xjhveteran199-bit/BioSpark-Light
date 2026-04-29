@@ -118,9 +118,33 @@
                     </label>
                     <label><span data-en="Overlap Ratio (0–0.9)" data-zh="重叠比例 (0–0.9)">Overlap Ratio (0–0.9)</span>
                         <input type="number" id="prep-overlap" value="0" min="0" max="0.9" step="0.05">
+                        <small id="prep-overlap-hint" class="hidden" style="display:block;margin-top:0.25rem;font-size:0.72rem;color:#fbbf24;line-height:1.35;">
+                            <span data-en="⚠ Overlapping windows from one recording stay grouped during the train/test split, but they still inflate sample counts. Keep at 0 unless you have a reason." data-zh="⚠ 同一段录音切出的重叠窗会被分到同一份切分中，但仍会人为增加样本数。除非有明确理由，否则保持 0。">⚠ Overlapping windows from one recording stay grouped during the train/test split, but they still inflate sample counts. Keep at 0 unless you have a reason.</span>
+                        </small>
                     </label>
                     <label><span data-en="Signal Column Index (0-based)" data-zh="信号列索引 (从 0 开始)">Signal Column Index (0-based)</span>
                         <input type="number" id="prep-sigcol" value="0" min="0" step="1">
+                    </label>
+                    <label><span data-en="Multi-channel Columns (optional, e.g. 1-5 or 1,2,3,4,5)" data-zh="多通道列范围（可选,如 1-5 或 1,2,3,4,5）">Multi-channel Columns (optional, e.g. 1-5 or 1,2,3,4,5)</span>
+                        <input type="text" id="prep-sigcols" placeholder="1-5" autocomplete="off">
+                        <small id="prep-sigcols-hint" style="display:block;margin-top:0.25rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.35;">
+                            <span data-en="0-based. Overrides single column when set. OpenBCI: typical 8 EXG channels start at index 1." data-zh="从 0 开始。设置后会覆盖单列选项。OpenBCI：8 通道 EXG 信号通常从索引 1 开始。">0-based. Overrides single column when set. OpenBCI: typical 8 EXG channels start at index 1.</span>
+                        </small>
+                    </label>
+                    <label><span data-en="Stride (sec, optional)" data-zh="切分步长（秒,可选）">Stride (sec, optional)</span>
+                        <input type="number" id="prep-stride" min="0" step="0.1" placeholder="auto">
+                        <small id="prep-stride-hint" style="display:block;margin-top:0.25rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.35;">
+                            <span data-en="Distance between segment starts. Use this for protocols like '1 s task every 5 s' (segment=1, stride=5). Leave blank for back-to-back / overlap-based segments." data-zh="两段起始点之间的距离。例如「每 5 秒做 1 秒任务」请填 segment=1, stride=5。留空时按 overlap 比例切分。">Distance between segment starts. Use this for protocols like '1 s task every 5 s' (segment=1, stride=5). Leave blank for back-to-back / overlap-based segments.</span>
+                        </small>
+                    </label>
+                    <label><span data-en="Group-aware split unit" data-zh="切分粒度">Group-aware split unit</span>
+                        <select id="prep-groupby">
+                            <option value="recording" data-en="Recording (default)" data-zh="按录音（默认）">Recording (default)</option>
+                            <option value="trial" data-en="Trial (each segment = 1 trial)" data-zh="按 trial（每个片段一个独立 trial）">Trial (each segment = 1 trial)</option>
+                        </select>
+                        <small id="prep-groupby-hint" style="display:block;margin-top:0.25rem;font-size:0.72rem;color:var(--text-secondary);line-height:1.35;">
+                            <span data-en="Recording: one source file = one group. Use when each file is a single trial. Trial: each segment is its own group — pick this when one long file contains many independent trials separated by rest periods (e.g. 60 × [1 s task + 4 s rest])." data-zh="录音级：一个文件就是一组（每个文件是单次 trial 时用）。Trial 级：每个片段都是独立组（一段长录音里包含多次「任务+休息」式 trial 时用，如「1 秒任务 + 4 秒休息」× 60 次）。">Recording: one source file = one group. Use when each file is a single trial. Trial: each segment is its own group — pick this when one long file contains many independent trials separated by rest periods (e.g. 60 × [1 s task + 4 s rest]).</span>
+                        </small>
                     </label>
                 </div>
 
