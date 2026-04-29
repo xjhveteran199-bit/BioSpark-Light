@@ -2,6 +2,7 @@
 
 > **文档版本**:对应 BioSpark-Light v0.1.1
 > **适用对象**:第一次拿到 BioSpark-Light 想完整跑通"从原始数据到训练好的模型"的所有人。
+> **English version**: see [USER-MANUAL.en.md](USER-MANUAL.en.md).
 
 ---
 
@@ -665,7 +666,8 @@ WANG-DAY1-CLENCH.txt → CLENCH
 | 文档 | 说明 |
 |------|------|
 | [README.md](../README.md) | 项目概览、安装快照 |
-| [USER-MANUAL.md](USER-MANUAL.md) | **本文档** — 完整用户手册 |
+| [USER-MANUAL.md](USER-MANUAL.md) | **本文档** — 完整用户手册(中文) |
+| [USER-MANUAL.en.md](USER-MANUAL.en.md) | Full user manual (English) — same content as this file |
 | [USAGE-OPENBCI.md](USAGE-OPENBCI.md) | OpenBCI 数据专项指南(本手册 §8 的扩展版) |
 | [BUILD.md](BUILD.md) | PyInstaller 打包流程,开发者用 |
 | [R&D-REPORT-2026-04-27.md](R&D-REPORT-2026-04-27.md) | 项目研发报告(架构决策、数据泄漏修复内史) |
