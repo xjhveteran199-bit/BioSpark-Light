@@ -14,6 +14,90 @@ BioSpark-Light is the **standalone desktop spin-off** of [BioSpark](https://gith
 
 ---
 
+<h2 align="center">☕ 请作者喝杯咖啡 · Buy the author a coffee</h2>
+
+<p align="center">
+  <em>BioSpark-Light 永久免费 · 零广告 · 零埋点 · 零注册</em><br>
+  <em>Free forever · No ads · No telemetry · No signup</em>
+</p>
+
+<p align="center">
+  <strong>每一杯咖啡，直接变成下一个新功能。</strong><br>
+  <strong>Every coffee literally pays for the next feature.</strong>
+</p>
+
+<table align="center">
+<tr>
+<td align="center" width="320">
+<h3>💖 赞赏作者</h3>
+<h4><sub>Tip the author</sub></h4>
+<img src="frontend/assets/donate-qr.png" width="240" alt="Donate QR"><br>
+<sub>建议金额 · Suggested</sub><br>
+<strong>☕ ¥10 — 一杯咖啡 / one coffee</strong><br>
+<strong>🍱 ¥30 — 一顿午饭 / one lunch</strong><br>
+<strong>🍻 ¥50 — 一顿火锅 / hot pot</strong><br>
+<strong>🚀 ¥100 — 永久之友 / forever friend</strong>
+</td>
+<td align="center" width="320">
+<h3>💬 用户群</h3>
+<h4><sub>User group</sub></h4>
+<img src="frontend/assets/group-qr.png" width="240" alt="Group QR"><br>
+<sub>优先更新 · 功能反馈 · 同行交流</sub><br>
+<sub>Priority updates · feature requests · peer chat</sub><br><br>
+<sub>群码失效？加作者微信</sub><br>
+<sub>Expired? Add WeChat:</sub><br>
+<code>happy-_-new_day_</code>
+</td>
+</tr>
+</table>
+
+<br>
+
+<table align="center">
+<tr><td>
+
+### 🎁 捐赠者福利 / Donor Perk
+
+<h3 align="center">
+  捐赠 <code>≥ ¥10</code> &nbsp;<strong>+</strong>&nbsp; <code>备注里留下你的邮箱</code><br>
+  Tip <code>≥ ¥10</code> &nbsp;<strong>+</strong>&nbsp; <code>leave your email in the note</code>
+</h3>
+
+<p align="center">⬇️</p>
+
+<h3 align="center">
+  v0.2 上线时，<strong>免费送你激活码</strong> 🎉<br>
+  Free <strong>v0.2 activation key</strong> when it ships 🎉
+</h3>
+
+<p align="center">
+  v0.2 计划新增：<br>
+  🔥 <strong>Grad-CAM 热力图</strong> — 看模型到底学到了什么<br>
+  📦 <strong>ONNX / TorchScript 导出</strong> — 把模型嵌入到 C++ / 移动端<br>
+  🧠 <strong>Transformer1D 架构</strong> — 不止 CNN
+</p>
+
+<p align="center">
+  <sub>
+    ⚠️ <strong>别忘了备注邮箱！</strong>没有邮箱我没法找到你哦。<br>
+    ⚠️ <strong>Don't forget the email!</strong> Without it, I can't reach you when v0.2 ships.
+  </sub>
+</p>
+
+</td></tr>
+</table>
+
+<p align="center">
+  <sub>
+    💡 作者目前是个独立开发者，所有时间都来自周末和深夜。<br>
+    💡 The author is an indie dev — all this work comes from weekends and late nights.<br>
+    一杯咖啡的鼓励，就是把 v0.2 提前几天的最大动力。<br>
+    A coffee's worth of encouragement is what brings v0.2 forward by days.
+  </sub>
+</p>
+
+---
+
 ## What's included
 
 | Tab | What it does |

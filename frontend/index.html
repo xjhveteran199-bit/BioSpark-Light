@@ -451,12 +451,89 @@
     <footer>
         <p data-en="BioSpark-Light v0.1 — local desktop biosignal lab"
            data-zh="BioSpark-Light v0.1 — 本地桌面生物信号实验台">BioSpark-Light v0.1</p>
+        <p style="margin-top:0.85rem;">
+            <button class="donate-link-btn donate-link-btn-big" onclick="Donate.open()"
+                    data-en="☕ Buy the author a coffee"
+                    data-zh="☕ 请作者喝杯咖啡">☕ Buy the author a coffee</button>
+        </p>
     </footer>
+
+    <!-- ═══════════════ DONATE / SUPPORT MODAL ═══════════════ -->
+    <div id="donate-modal" class="donate-modal hidden" onclick="Donate.handleBackdropClick(event)">
+        <div class="donate-modal-card" onclick="event.stopPropagation()">
+            <button class="donate-close-btn" onclick="Donate.close()" aria-label="Close">×</button>
+            <h2 class="donate-title"
+                data-en="☕ BioSpark-Light is free"
+                data-zh="☕ BioSpark-Light 永久免费">☕ BioSpark-Light is free</h2>
+            <p class="donate-lead"
+               data-en="No ads, no telemetry, no signup. If it saved you time, consider buying the author a coffee — every coffee literally pays for the next feature."
+               data-zh="无广告、无埋点、无需注册。如果它帮你省下了时间，请作者喝杯咖啡 —— 每一杯咖啡都直接变成下一个新功能。">
+                No ads, no telemetry, no signup. If it saved you time, consider buying the author a coffee.
+            </p>
+
+            <div class="donate-qr-grid">
+                <div class="donate-qr-cell">
+                    <div class="donate-qr-label"
+                         data-en="Tip the author"
+                         data-zh="赞赏作者">Tip the author</div>
+                    <img src="assets/donate-qr.png" alt="Donation QR" class="donate-qr-img">
+                    <div class="donate-qr-hint"
+                         data-en="Suggested: ¥10 / coffee"
+                         data-zh="建议金额：¥10 / 一杯咖啡">Suggested: ¥10</div>
+                </div>
+                <div class="donate-qr-cell">
+                    <div class="donate-qr-label"
+                         data-en="Join user group"
+                         data-zh="加入用户群">Join user group</div>
+                    <img src="assets/group-qr.png" alt="Group QR" class="donate-qr-img">
+                    <div class="donate-qr-hint"
+                         data-en="Priority updates · feature requests · expired? add WeChat: <strong>happy-_-new_day_</strong>"
+                         data-zh="优先更新通知 · 功能反馈 · 群码失效请加微信 <strong>happy-_-new_day_</strong>">
+                        Priority updates · feature requests
+                    </div>
+                </div>
+            </div>
+
+            <div class="donate-perk donate-perk-loud">
+                <div class="donate-perk-badge"
+                     data-en="🎁 DONOR PERK"
+                     data-zh="🎁 捐赠者福利">🎁 DONOR PERK</div>
+                <div class="donate-perk-headline"
+                     data-en='Tip <span class="hl">≥ ¥10</span> &nbsp;+&nbsp; <span class="hl">leave your email in the note</span>'
+                     data-zh='捐赠 <span class="hl">≥ ¥10</span> &nbsp;+&nbsp; <span class="hl">备注里留下你的邮箱</span>'>
+                    Tip ≥ ¥10 + leave your email in the note
+                </div>
+                <div class="donate-perk-arrow">↓</div>
+                <div class="donate-perk-reward"
+                     data-en='Free <strong>v0.2</strong> activation key (planned: <em>Grad-CAM · ONNX export · Transformer1D</em>) when it ships.'
+                     data-zh='等 <strong>v0.2</strong> 上线后免费送你激活码（计划新增：<em>Grad-CAM 热力图 · ONNX 导出 · Transformer1D 架构</em>）'>
+                    Free v0.2 activation key when it ships.
+                </div>
+                <div class="donate-perk-foot"
+                     data-en="⚠️ Don't forget the email — without it, I can't reach you when v0.2 ships."
+                     data-zh="⚠️ 别忘了备注邮箱 —— 不然 v0.2 上线我没法找到你哦">
+                    ⚠️ Don't forget the email!
+                </div>
+            </div>
+
+            <div class="donate-actions">
+                <label class="donate-dont-show">
+                    <input type="checkbox" id="donate-dont-show">
+                    <span data-en="Don't show on next launch"
+                          data-zh="启动时不再自动弹出">Don't show on next launch</span>
+                </label>
+                <button class="btn primary" onclick="Donate.close()"
+                        data-en="Got it"
+                        data-zh="好的">Got it</button>
+            </div>
+        </div>
+    </div>
 
     <script src="js/trainer.js?v=1"></script>
     <script src="js/figures.js?v=1"></script>
     <script src="js/prep.js?v=1"></script>
     <script src="js/my_models.js?v=1"></script>
+    <script src="js/donate.js?v=1"></script>
     <script src="js/app.js?v=1"></script>
     <script>
         document.getElementById('cfg-auto-mode')?.addEventListener('change', function() {

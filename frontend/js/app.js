@@ -20,6 +20,7 @@ const App = {
         if (window.Trainer) Trainer.init();
         if (window.Prep) Prep.init();
         if (window.MyModels) MyModels.init();
+        if (window.Donate) Donate.init();
 
         // Detect browser language; remember user's manual choice in localStorage
         const stored = localStorage.getItem('biospark-lang');
