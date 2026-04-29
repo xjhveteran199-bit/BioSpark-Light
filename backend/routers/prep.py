@@ -48,6 +48,19 @@ class PrepConfig(BaseModel):
     segment_length_sec: float = Field(gt=0)
     overlap_ratio: float = Field(default=0.0, ge=0.0, lt=1.0)
     signal_col_index: int = Field(default=0, ge=0)
+    # Multi-channel: when present, overrides signal_col_index. 0-indexed.
+    signal_col_indices: Optional[list[int]] = None
+    # Optional explicit stride (sec) between segment starts. Use this for
+    # protocols where the valid window is shorter than the inter-trial
+    # period (e.g. OpenBCI 1 s task / 5 s epoch → segment_length_sec=1.0,
+    # stride_sec=5.0). When None, falls back to overlap_ratio semantics.
+    stride_sec: Optional[float] = Field(default=None, gt=0.0)
+    # Group-aware split granularity. "recording" (default) gives one group
+    # per source file/interval — correct when each recording is a single
+    # trial. "trial" gives one group per emitted segment — use this when
+    # one long recording contains many independent trials separated by
+    # rest periods (e.g. OpenBCI 1 s task / 5 s epoch × 60).
+    group_by: str = Field(default="recording", pattern="^(recording|trial)$")
     # Mode B
     intervals: Optional[list[dict]] = None
     # Mode C
@@ -106,10 +119,13 @@ async def segment(
                 segment_length_sec=cfg.segment_length_sec,
                 overlap_ratio=cfg.overlap_ratio,
                 signal_col_index=cfg.signal_col_index,
+                signal_col_indices=cfg.signal_col_indices,
+                stride_sec=cfg.stride_sec,
+                group_by=cfg.group_by,
             )
         elif cfg.mode == "B":
             if not (filename.lower().endswith(".csv") or filename.lower().endswith(".txt")):
-                raise HTTPException(status_code=422, detail="Mode B expects a .csv upload.")
+                raise HTTPException(status_code=422, detail="Mode B expects a .csv or .txt upload.")
             if not cfg.intervals:
                 raise HTTPException(status_code=422, detail="Mode B requires `intervals`.")
             df = dp.segment_with_intervals(
@@ -119,6 +135,10 @@ async def segment(
                 segment_length_sec=cfg.segment_length_sec,
                 overlap_ratio=cfg.overlap_ratio,
                 signal_col_index=cfg.signal_col_index,
+                signal_col_indices=cfg.signal_col_indices,
+                stride_sec=cfg.stride_sec,
+                filename=filename,
+                group_by=cfg.group_by,
             )
         elif cfg.mode == "C":
             if not filename.lower().endswith(".zip"):
@@ -132,6 +152,9 @@ async def segment(
                 sampling_rate=cfg.sampling_rate,
                 segment_length_sec=cfg.segment_length_sec,
                 overlap_ratio=cfg.overlap_ratio,
+                signal_col_indices=cfg.signal_col_indices,
+                stride_sec=cfg.stride_sec,
+                group_by=cfg.group_by,
             )
         else:
             raise HTTPException(status_code=422, detail=f"Unknown mode: {cfg.mode}")

@@ -124,8 +124,14 @@ class TrainingJob:
         self.model: Optional[Signal1DCNN] = None
         self.val_X: Optional[np.ndarray] = None
         self.val_y: Optional[np.ndarray] = None
+        self.test_X: Optional[np.ndarray] = None
+        self.test_y: Optional[np.ndarray] = None
         self.n_channels: int = 1              # resolved channel count
         self.signal_length: int = 0           # filled at training time
+        # Set by TrainingManager.start before the thread launches.
+        self.group_aware: bool = False
+        self.n_groups: int = 0
+        self.split_info: dict = {}            # filled at training time
 
         # Self-improving (warm-start) metadata
         self.user_id = user_id
@@ -185,7 +191,15 @@ def _reshape_for_channels(X: np.ndarray, n_channels: int) -> np.ndarray:
 
 
 def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
-    """Convert raw file bytes into (X, y, class_names) numpy arrays.
+    """Convert raw file bytes into (X, y, class_names, groups) numpy arrays.
+
+    ``groups`` is a per-sample recording id used by the trainer to keep
+    segments from the same source recording out of separate train/val/test
+    splits. For CSV uploads we read it from a ``__group__`` column when
+    present (emitted by data_preparator); otherwise we fall back to a
+    per-row id (every sample is its own group → equivalent to a random
+    split). For ZIP-folder uploads each file is one sample → group = file
+    path.
 
     For CSV:  each row = 1 sample; signal columns = feature vector.
     For ZIP:  each file = 1 sample; first signal column = time series.
@@ -202,6 +216,7 @@ def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
         df = pd.read_csv(io.StringIO(text))
 
         label_col = summary.get("label_column", "label")
+        group_col = summary.get("group_column")
 
         # Reorder columns by channel if prefix detected
         channel_map = summary.get("channel_map", {})
@@ -214,12 +229,16 @@ def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
 
         X = df[sig_cols].values.astype(np.float32)
         y = df[label_col].astype(str).map(label_to_idx).values.astype(np.int64)
-        return X, y, class_names
+        if group_col and group_col in df.columns:
+            groups = df[group_col].astype(str).values
+        else:
+            groups = np.array([f"row_{i}" for i in range(len(df))], dtype=object)
+        return X, y, class_names, groups
 
     elif fmt == "zip_folder":
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
             names = zf.namelist()
-            samples, labels = [], []
+            samples, labels, group_list = [], [], []
 
             for name in names:
                 parts = Path(name).parts
@@ -244,6 +263,7 @@ def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
                 sig = sdf[sig_cols[0]].values.astype(np.float32)
                 samples.append(sig)
                 labels.append(label_to_idx[class_name])
+                group_list.append(name)
 
             # Pad / truncate to uniform length
             lengths = [len(s) for s in samples]
@@ -257,7 +277,8 @@ def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
                     X_list.append(np.pad(s, (0, target_len - len(s))))
             X = np.stack(X_list)
             y = np.array(labels, dtype=np.int64)
-            return X, y, class_names
+            groups = np.array(group_list, dtype=object)
+            return X, y, class_names, groups
 
     raise ValueError(f"Unsupported dataset format: {fmt}")
 
@@ -266,7 +287,86 @@ def _dataset_to_tensors(file_bytes: bytes, filename: str, summary: dict):
 # Training loop (runs in a worker thread)
 # ---------------------------------------------------------------------------
 
-def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray):
+def _split_indices(
+    n_samples: int,
+    groups: np.ndarray,
+    val_split: float,
+    test_split: float,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    """Group-aware three-way split: train / val / test.
+
+    Two sklearn GroupShuffleSplits stacked: first carve out the test groups,
+    then split the remaining groups into train / val. Falls back to a random
+    per-sample split when ``test_split == 0`` (two-way) or when there is only
+    a single group (effectively random).
+
+    Returns (train_idx, val_idx, test_idx, info_dict). ``test_idx`` is empty
+    when ``test_split == 0``.
+    """
+    from sklearn.model_selection import GroupShuffleSplit
+
+    unique_groups = np.unique(groups)
+    n_groups = len(unique_groups)
+    info: dict = {
+        "n_groups": int(n_groups),
+        "group_aware": bool(n_groups < n_samples),
+        "val_split": float(val_split),
+        "test_split": float(test_split),
+    }
+
+    # Degenerate case: every sample is its own group → behaves as random split.
+    if n_groups < 2:
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(n_samples)
+        n_test = int(round(n_samples * test_split))
+        n_val = int(round(n_samples * val_split))
+        test_idx = perm[:n_test]
+        val_idx = perm[n_test : n_test + n_val]
+        train_idx = perm[n_test + n_val :]
+        return train_idx, val_idx, test_idx, info
+
+    all_idx = np.arange(n_samples)
+
+    # Step 1: carve out test groups (skip if test_split == 0).
+    if test_split > 0.0:
+        # Need ≥2 groups to GSS; if only 2 exist, force one into test.
+        gss_test = GroupShuffleSplit(
+            n_splits=1, test_size=test_split, random_state=seed,
+        )
+        trainval_idx, test_idx = next(gss_test.split(all_idx, y=None, groups=groups))
+    else:
+        trainval_idx = all_idx
+        test_idx = np.array([], dtype=np.int64)
+
+    # Step 2: split remaining into train / val by group.
+    rem_groups = groups[trainval_idx]
+    rem_unique = np.unique(rem_groups)
+    if len(rem_unique) < 2:
+        # Only one group left — fall back to a per-sample split inside it
+        # so val isn't empty.
+        rng = np.random.default_rng(seed + 1)
+        perm = rng.permutation(len(trainval_idx))
+        n_val = max(1, int(round(len(trainval_idx) * val_split)))
+        val_idx = trainval_idx[perm[:n_val]]
+        train_idx = trainval_idx[perm[n_val:]]
+    else:
+        # Adjust val_size to be relative to the trainval pool.
+        rel_val = val_split / max(1.0 - test_split, 1e-6)
+        rel_val = float(np.clip(rel_val, 0.05, 0.5))
+        gss_val = GroupShuffleSplit(
+            n_splits=1, test_size=rel_val, random_state=seed + 1,
+        )
+        sub_train, sub_val = next(
+            gss_val.split(trainval_idx, y=None, groups=rem_groups)
+        )
+        train_idx = trainval_idx[sub_train]
+        val_idx = trainval_idx[sub_val]
+
+    return train_idx, val_idx, test_idx, info
+
+
+def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray, groups: np.ndarray):
     """Blocking training loop — call from a thread, not from async."""
     try:
         job.status = "training"
@@ -276,6 +376,7 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray):
         lr = cfg.get("learning_rate", 1e-3)
         batch_size = cfg.get("batch_size", 64)
         val_split = cfg.get("val_split", 0.2)
+        test_split = cfg.get("test_split", 0.2)
         n_channels = job.n_channels
 
         n_samples = X.shape[0]
@@ -287,10 +388,31 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray):
         X_std = X.std(axis=1, keepdims=True) + 1e-8
         X = (X - X_mean) / X_std
 
-        # Train / val split (stratified-ish)
-        perm = np.random.permutation(n_samples)
-        split = max(1, int(n_samples * (1 - val_split)))
-        train_idx, val_idx = perm[:split], perm[split:]
+        # Group-aware three-way split. With recording-level groups, segments
+        # from the same source recording stay in one split — eliminates the
+        # window-overlap leakage that otherwise inflates val accuracy.
+        train_idx, val_idx, test_idx, split_info = _split_indices(
+            n_samples=n_samples,
+            groups=groups,
+            val_split=val_split,
+            test_split=test_split,
+        )
+        # Guard: if either val or train is empty (e.g. very small dataset),
+        # fall back to a random split so training can still proceed.
+        if len(train_idx) == 0 or len(val_idx) == 0:
+            rng = np.random.default_rng(0)
+            perm = rng.permutation(n_samples)
+            n_val = max(1, int(round(n_samples * val_split)))
+            val_idx = perm[:n_val]
+            train_idx = perm[n_val:]
+            test_idx = np.array([], dtype=np.int64)
+            split_info["fallback_random"] = True
+        job.split_info = {
+            **split_info,
+            "n_train": int(len(train_idx)),
+            "n_val": int(len(val_idx)),
+            "n_test": int(len(test_idx)),
+        }
 
         # Reshape to (N, C, L) — handles both single and multi-channel
         X_3d = _reshape_for_channels(X, n_channels)
@@ -331,9 +453,14 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray):
             persistent_workers=_persistent,
         )
 
-        # Store val data (flat) for Phase 3 (confusion matrix / t-SNE)
+        # Store val + test data (flat) for Phase 3 (confusion matrix / t-SNE).
+        # The confusion matrix runs on test when available, since val is the
+        # set early stopping tunes on. Falls back to val for tiny datasets.
         job.val_X = X[val_idx]
         job.val_y = y[val_idx]
+        if len(test_idx) > 0:
+            job.test_X = X[test_idx]
+            job.test_y = y[test_idx]
 
         # ----- Auto-optimization (optional) -----
         auto_mode = cfg.get("auto_mode", False)
@@ -468,10 +595,12 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray):
             "total_epochs": epochs,
             "n_train": len(train_idx),
             "n_val": len(val_idx),
+            "n_test": int(len(test_idx)),
             "signal_length": signal_len,
             "n_channels": n_channels,
             "n_classes": n_classes,
             "device": str(device),
+            "split": job.split_info,
         }
         if auto_mode:
             start_payload["auto_mode"] = True
@@ -600,7 +729,7 @@ class TrainingManager:
         on_complete: Optional[Callable[[TrainingJob], Awaitable[None]]] = None,
     ) -> TrainingJob:
         """Parse the dataset, create a job, and launch training in a thread."""
-        X, y, class_names = _dataset_to_tensors(file_bytes, filename, summary)
+        X, y, class_names, groups = _dataset_to_tensors(file_bytes, filename, summary)
 
         # Resolve effective n_channels and validate
         n_channels = _resolve_n_channels(config, summary)
@@ -621,11 +750,15 @@ class TrainingManager:
         )
         job.n_channels = n_channels
         job.warm_started_from_id = warm_started_from_id
+        # Track whether the dataset carried real recording-level group ids.
+        # If every sample is its own group, the split degenerates to random.
+        job.group_aware = bool(summary.get("group_column"))
+        job.n_groups = len(set(groups.tolist()))
         self.jobs[job_id] = job
 
         import threading
         t = threading.Thread(
-            target=_run_training, args=(job, X, y), daemon=True
+            target=_run_training, args=(job, X, y, groups), daemon=True
         )
         t.start()
         return job
@@ -642,17 +775,29 @@ training_manager = TrainingManager()
 # ---------------------------------------------------------------------------
 
 def compute_confusion_matrix(job: TrainingJob) -> dict:
-    """Run inference on val set and return confusion matrix + per-class metrics."""
-    if job.model is None or job.val_X is None:
-        raise ValueError("Model or validation data not available.")
+    """Run inference on the held-out test set (or val if no test) and return
+    confusion matrix + per-class metrics + a leakage-suspect heuristic.
+    """
+    if job.model is None:
+        raise ValueError("Model not available.")
+
+    # Prefer the held-out test set — val was used for early stopping and is
+    # not an honest generalization estimate. Fall back to val for tiny
+    # datasets where the test split was zero-sized.
+    if job.test_X is not None and job.test_y is not None and len(job.test_y) > 0:
+        eval_X, eval_y, eval_set = job.test_X, job.test_y, "test"
+    elif job.val_X is not None and job.val_y is not None:
+        eval_X, eval_y, eval_set = job.val_X, job.val_y, "val"
+    else:
+        raise ValueError("No evaluation data available.")
 
     model = job.model
     model.eval()
 
-    X_val = torch.FloatTensor(_reshape_for_channels(job.val_X, job.n_channels))
+    X_eval = torch.FloatTensor(_reshape_for_channels(eval_X, job.n_channels))
     with torch.no_grad():
-        preds = model(X_val).argmax(dim=1).numpy()
-    y_true = job.val_y
+        preds = model(X_eval).argmax(dim=1).numpy()
+    y_true = eval_y
 
     n_classes = len(job.class_names)
     matrix = np.zeros((n_classes, n_classes), dtype=int)
@@ -676,11 +821,51 @@ def compute_confusion_matrix(job: TrainingJob) -> dict:
             "support": int(matrix[i, :].sum()),
         })
 
+    accuracy = float(np.trace(matrix)) / max(float(matrix.sum()), 1)
+
+    # Leakage-suspect heuristic: a perfect or near-perfect confusion matrix
+    # on a small set, *without* recording-level groups, is the classic
+    # signature of overlapping windows leaking across the split.
+    min_support = min((c["support"] for c in per_class), default=0)
+    leakage_warning: dict | None = None
+    if accuracy >= 0.99 and min_support < 30:
+        if not job.group_aware:
+            reason = (
+                "Validation accuracy is ≥99% on a small set and the dataset "
+                "does not carry recording-level group ids — overlapping or "
+                "adjacent segments from one trial likely appear in both train "
+                "and evaluation splits. Re-prepare the dataset through the "
+                "Prep tab so segments include a __group__ column."
+            )
+        elif eval_set == "val":
+            reason = (
+                "Validation accuracy is ≥99% on a small set, and there is no "
+                "held-out test set. The reported number is what early "
+                "stopping tunes against, not generalization."
+            )
+        else:
+            reason = (
+                "Test accuracy is ≥99% on only "
+                f"{int(matrix.sum())} samples — too few to distinguish a "
+                "truly easy task from a fortunate split. Add more "
+                "recordings or run group-aware k-fold cross-validation."
+            )
+        leakage_warning = {
+            "level": "warning",
+            "reason": reason,
+            "min_support": int(min_support),
+            "evaluation_set": eval_set,
+        }
+
     return {
         "matrix": matrix.tolist(),
         "class_names": job.class_names,
         "per_class": per_class,
-        "accuracy": round(float(np.trace(matrix)) / max(float(matrix.sum()), 1), 4),
+        "accuracy": round(accuracy, 4),
+        "evaluation_set": eval_set,
+        "split_info": job.split_info,
+        "group_aware": job.group_aware,
+        "leakage_warning": leakage_warning,
     }
 
 

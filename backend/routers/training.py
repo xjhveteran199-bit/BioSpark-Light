@@ -63,6 +63,7 @@ _PRESETS = {
         "learning_rate": 1e-3,
         "batch_size": 64,
         "val_split": 0.2,
+        "test_split": 0.2,
         "auto_mode": True,
         "lr_search": False,
         "early_stopping_patience": 12,
@@ -79,6 +80,7 @@ _PRESETS = {
         "learning_rate": 1e-3,
         "batch_size": 64,
         "val_split": 0.2,
+        "test_split": 0.2,
         "auto_mode": False,
         "lr_search": False,
         "early_stopping_patience": 8,
@@ -95,6 +97,7 @@ _PRESETS = {
         "learning_rate": 1e-3,
         "batch_size": 32,
         "val_split": 0.2,
+        "test_split": 0.2,
         "auto_mode": True,
         "lr_search": True,
         "early_stopping_patience": 20,
@@ -111,6 +114,7 @@ _PRESETS = {
         "learning_rate": 1e-3,
         "batch_size": 64,
         "val_split": 0.2,
+        "test_split": 0.2,
         "auto_mode": False,
         "lr_search": False,
         "early_stopping_patience": 10,
@@ -181,6 +185,7 @@ class TrainStartRequest(BaseModel):
     learning_rate: float = Field(default=1e-3, gt=0, le=1.0)
     batch_size: int = Field(default=64, ge=4, le=512)
     val_split: float = Field(default=0.2, gt=0.0, lt=1.0)
+    test_split: float = Field(default=0.2, ge=0.0, lt=0.9)
     n_channels: int = Field(default=0, ge=0, le=64)
     auto_mode: bool = Field(default=False)
     early_stopping_patience: int = Field(default=10, ge=3, le=50)
@@ -198,7 +203,7 @@ async def assess_dataset(dataset_id: str):
     try:
         from backend.services.auto_optimizer import DataQualityAssessor
         trainer = _get_trainer()
-        X, y, class_names = trainer._dataset_to_tensors(
+        X, y, class_names, _groups = trainer._dataset_to_tensors(
             entry["file_bytes"], entry["filename"], entry["summary"]
         )
         result = DataQualityAssessor().assess(X, y, class_names)
@@ -342,6 +347,10 @@ async def start_training(req: TrainStartRequest):
         "learning_rate": req.learning_rate if req.preset == "custom" else preset_cfg["learning_rate"],
         "batch_size": req.batch_size if req.preset == "custom" else preset_cfg["batch_size"],
         "val_split": req.val_split if req.preset == "custom" else preset_cfg["val_split"],
+        "test_split": (
+            req.test_split if req.preset == "custom"
+            else preset_cfg.get("test_split", 0.2)
+        ),
         "n_channels": req.n_channels,
         "auto_mode": req.auto_mode if req.preset == "custom" else preset_cfg["auto_mode"],
         "early_stopping_patience": req.early_stopping_patience if req.preset == "custom" else preset_cfg["early_stopping_patience"],

@@ -19,8 +19,22 @@ const Prep = (() => {
     function init() {
         _bindDropZone();
         _bindFileInput();
+        _bindOverlapHint();
         // Seed Mode B with one empty interval row so users see the editor
         _renderIntervalRow({ start: '', end: '', label: '' });
+    }
+
+    function _bindOverlapHint() {
+        const inp = document.getElementById('prep-overlap');
+        const hint = document.getElementById('prep-overlap-hint');
+        if (!inp || !hint || inp.dataset.hintBound === '1') return;
+        inp.dataset.hintBound = '1';
+        const update = () => {
+            const v = parseFloat(inp.value);
+            hint.classList.toggle('hidden', !(v > 0));
+        };
+        inp.addEventListener('input', update);
+        update();
     }
 
     function onShow() {
@@ -132,7 +146,57 @@ const Prep = (() => {
         }
         document.getElementById('prep-sigcol').value = inspectInfo.suggested_signal_col || 0;
 
+        // Prefill multi-channel column hint when the inspector found a
+        // contiguous run of signal columns (most useful for OpenBCI dumps).
+        const idxs = inspectInfo.suggested_signal_col_indices;
+        const sigcolsField = document.getElementById('prep-sigcols');
+        if (sigcolsField && Array.isArray(idxs) && idxs.length > 1) {
+            sigcolsField.value = _idxsToRange(idxs);
+            // OpenBCI convention: use the multi-channel hint as default
+            // when we detected the header — better than leaving the user
+            // to figure out which column to pick.
+            if (inspectInfo.openbci_detected) {
+                _setStatus('prep-upload-status', 'success',
+                    `OpenBCI · ${inspectInfo.files.length} file(s) · ${idxs.length} signal channels detected (cols ${sigcolsField.value})`);
+            }
+        }
+
         if (mode === 'C') _renderFileMap();
+    }
+
+    /** "1,2,3,4,5" or "1-5" → [1,2,3,4,5]. Returns null if blank/invalid. */
+    function _parseColSpec(text) {
+        const t = (text || '').trim();
+        if (!t) return null;
+        const out = new Set();
+        for (const part of t.split(',')) {
+            const p = part.trim();
+            if (!p) continue;
+            const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+            if (m) {
+                const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+                if (Number.isNaN(a) || Number.isNaN(b) || a > b) return null;
+                for (let i = a; i <= b; i++) out.add(i);
+            } else {
+                const v = parseInt(p, 10);
+                if (Number.isNaN(v)) return null;
+                out.add(v);
+            }
+        }
+        const arr = Array.from(out).sort((a, b) => a - b);
+        return arr.length ? arr : null;
+    }
+
+    /** [1,2,3,4,5] → "1-5". Falls back to comma list when non-contiguous. */
+    function _idxsToRange(arr) {
+        if (!arr || !arr.length) return '';
+        const sorted = arr.slice().sort((a, b) => a - b);
+        let contig = true;
+        for (let i = 1; i < sorted.length; i++) {
+            if (sorted[i] !== sorted[i - 1] + 1) { contig = false; break; }
+        }
+        if (contig && sorted.length >= 2) return `${sorted[0]}-${sorted[sorted.length - 1]}`;
+        return sorted.join(',');
     }
 
     function _renderFileMap() {
@@ -188,12 +252,19 @@ const Prep = (() => {
             _setStatus('prep-run-status', 'error', 'Upload a file first.');
             return;
         }
+        const sigCols = _parseColSpec(document.getElementById('prep-sigcols').value);
+        const strideRaw = document.getElementById('prep-stride').value;
+        const stride = strideRaw === '' ? null : parseFloat(strideRaw);
+        const groupBy = document.getElementById('prep-groupby').value || 'recording';
         const config = {
             mode,
             sampling_rate:      parseFloat(document.getElementById('prep-sr').value),
             segment_length_sec: parseFloat(document.getElementById('prep-seglen').value),
             overlap_ratio:      parseFloat(document.getElementById('prep-overlap').value) || 0,
             signal_col_index:   parseInt(document.getElementById('prep-sigcol').value, 10) || 0,
+            signal_col_indices: sigCols,
+            stride_sec:         (stride && stride > 0) ? stride : null,
+            group_by:           groupBy,
         };
         if (mode === 'B') {
             config.intervals = _collectIntervals();

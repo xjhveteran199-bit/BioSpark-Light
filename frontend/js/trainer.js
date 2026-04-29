@@ -93,10 +93,71 @@ const Trainer = (() => {
         _renderDataPreview(data);
         _renderClassChart(data);
         _renderClassTable(data);
+        _renderGroupAwareBanner(data);
         document.getElementById('train-next-btn').disabled = false;
         document.getElementById('train-summary-section').scrollIntoView({ behavior: 'smooth' });
         // Self-Improving: refresh warm-start availability for this dataset shape
         _refreshWarmStartToggle(data);
+    }
+
+    function _logSplitMode(msg) {
+        const log = document.getElementById('train-epoch-log');
+        if (!log) return;
+        const split = msg.split || {};
+        const isZh = (window.App && App.lang === 'zh');
+        const groupAware = !!split.group_aware;
+        const nGroups = split.n_groups ?? '?';
+        const line = document.createElement('div');
+        line.className = 'epoch-line';
+        line.style.color = groupAware ? '#34d399' : '#fbbf24';
+        const mode = groupAware
+            ? (isZh ? `组级切分 · ${nGroups} 个录音组` : `group-aware split · ${nGroups} groups`)
+            : (isZh ? '逐行随机切分（缺少 __group__ 列）' : 'per-row random split (no __group__ column)');
+        line.textContent =
+            (isZh ? `切分: ${mode} · train=${msg.n_train} val=${msg.n_val} test=${msg.n_test ?? 0}`
+                  : `Split: ${mode} · train=${msg.n_train} val=${msg.n_val} test=${msg.n_test ?? 0}`);
+        log.appendChild(line);
+        log.scrollTop = log.scrollHeight;
+    }
+
+    function _renderGroupAwareBanner(data) {
+        const host = document.getElementById('train-summary-section');
+        if (!host) return;
+        // Reuse one DOM node; remove and rebuild on each summary load.
+        let banner = document.getElementById('train-group-banner');
+        if (banner) banner.remove();
+
+        // ZIP-folder uploads use one file per sample → group-aware split is
+        // automatic and uninteresting to flag. Only warn for CSVs that are
+        // missing the group column.
+        if (data.format === 'zip_folder') return;
+        const hasGroup = !!data.group_column;
+        if (hasGroup) return;
+
+        const isZh = (window.App && App.lang === 'zh');
+        banner = document.createElement('div');
+        banner.id = 'train-group-banner';
+        banner.style.cssText = `
+            background: rgba(251,191,36,0.08);
+            border: 1px solid rgba(251,191,36,0.55);
+            border-left: 4px solid #fbbf24;
+            padding: 0.75rem 1rem;
+            margin-top: 1rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            line-height: 1.45;
+        `;
+        const title = isZh
+            ? '⚠️ 此数据集没有 __group__ 列（录音级 ID）'
+            : '⚠️ This dataset has no __group__ column (recording-level id)';
+        const body = isZh
+            ? '训练时 train/val/test 切分会退化为<strong>逐行随机</strong>——同一段录音切出的相邻窗可能被分到不同切分中,导致验证准确率虚高。要做有意义的泛化评估,请改走 <strong>Prep 标签页</strong>(Mode A/B/C)从原始长录音重新切分,Prep 会自动写入 __group__ 列。'
+            : 'Train/val/test splitting will degrade to <strong>per-row random</strong> — adjacent windows from one recording may end up in different splits, inflating validation accuracy. To get an honest generalization estimate, re-prepare from the original long recordings via the <strong>Prep tab</strong> (Mode A/B/C); Prep emits __group__ automatically.';
+        banner.innerHTML = `
+            <div style="font-weight:600;margin-bottom:0.3rem;color:#fbbf24">${title}</div>
+            <div style="color:var(--text-secondary)">${body}</div>
+        `;
+        host.appendChild(banner);
     }
 
     async function _refreshWarmStartToggle(data) {
@@ -590,6 +651,7 @@ const Trainer = (() => {
             if (msg.type === 'start') {
                 console.log('Training started:', msg);
                 totalEpochs = msg.total_epochs || totalEpochs;
+                _logSplitMode(msg);
             }
 
             if (msg.type === 'epoch') {
@@ -756,10 +818,47 @@ const Trainer = (() => {
         _cmMode = 'count';
         _drawCMChart();
 
-        const { per_class, accuracy } = data;
+        const { per_class, accuracy, evaluation_set, leakage_warning } = data;
+        const isZh = (window.App && App.lang === 'zh');
+
+        // Leakage-suspect banner — surfaces the "100% on a tiny set" pattern.
+        // Hard-to-miss styling (yellow border) because users tend to celebrate
+        // 100% accuracy without realizing it's a data-leakage artifact.
+        let bannerHTML = '';
+        if (leakage_warning) {
+            const heading = isZh
+                ? '⚠️ 评估准确率过高，疑似数据泄漏'
+                : '⚠️ Suspiciously high accuracy — possible data leakage';
+            bannerHTML = `
+                <div class="leakage-banner" style="
+                    background: rgba(251,191,36,0.08);
+                    border: 1px solid rgba(251,191,36,0.55);
+                    border-left: 4px solid #fbbf24;
+                    padding: 0.75rem 1rem;
+                    margin-bottom: 0.75rem;
+                    border-radius: 4px;
+                    font-size: 0.85rem;
+                    line-height: 1.45;
+                ">
+                    <div style="font-weight:600;margin-bottom:0.3rem;color:#fbbf24">
+                        ${heading}
+                    </div>
+                    <div style="color:var(--text-secondary)">
+                        ${leakage_warning.reason}
+                    </div>
+                </div>`;
+        }
+
+        const evalLabel = evaluation_set === 'test'
+            ? (isZh ? '独立测试集' : 'held-out test set')
+            : (isZh ? '验证集（无独立测试）' : 'validation set (no held-out test)');
 
         // Per-class metrics table
         const tableHTML = `
+            ${bannerHTML}
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:0.4rem">
+                ${isZh ? '评估集' : 'Evaluation set'}: <strong>${evalLabel}</strong>
+            </div>
             <table class="train-table">
                 <thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Support</th></tr></thead>
                 <tbody>

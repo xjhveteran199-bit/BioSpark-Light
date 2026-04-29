@@ -23,17 +23,30 @@ import pandas as pd
 _TIME_COL_NAMES = {"time", "t", "timestamp", "seconds", "sec", "ms", "index"}
 # Columns that are treated as labels
 _LABEL_COL_NAMES = {"label", "class", "target", "y"}
+# Columns that identify the originating recording/trial — used by the trainer
+# for group-aware splits, never as a feature. Emitted by data_preparator.
+_GROUP_COL_NAMES = {"__group__", "group", "group_id", "trial_id", "recording_id"}
 
 # Regex for channel-prefixed column names: ch1_1, ch2_10, channel1_5, CH3_001, c1_1
 _CHANNEL_RE = re.compile(r"^(ch(?:annel)?[\s_-]?\d+)[\s_-](\d+)$", re.IGNORECASE)
 
 
 def _signal_cols(df: pd.DataFrame, exclude: list[str]) -> list[str]:
-    """Return column names that are signal data (not time, not excluded)."""
+    """Return column names that are signal data (not time, not group, not excluded)."""
     return [
         c for c in df.columns
-        if c not in exclude and c.strip().lower() not in _TIME_COL_NAMES
+        if c not in exclude
+        and c.strip().lower() not in _TIME_COL_NAMES
+        and c.strip().lower() not in _GROUP_COL_NAMES
     ]
+
+
+def _find_group_col(df: pd.DataFrame) -> str | None:
+    """Return the group column name if one exists, else None."""
+    for col in df.columns:
+        if col.strip().lower() in _GROUP_COL_NAMES:
+            return col
+    return None
 
 
 def _detect_channel_structure(sig_cols: list[str]) -> dict:
@@ -95,7 +108,9 @@ def _parse_labeled_csv(df: pd.DataFrame) -> dict:
             "'label', 'class', 'target', or 'y'."
         )
 
-    sig_cols = _signal_cols(df, exclude=[label_col])
+    group_col = _find_group_col(df)
+    exclude_cols = [label_col] + ([group_col] if group_col else [])
+    sig_cols = _signal_cols(df, exclude=exclude_cols)
     if not sig_cols:
         raise ValueError(
             "No signal columns found after excluding the label and time columns."
@@ -123,9 +138,13 @@ def _parse_labeled_csv(df: pd.DataFrame) -> dict:
         r[label_col] = str(row[label_col])
         data_preview_rows.append(r)
 
+    n_groups = int(df[group_col].nunique()) if group_col else 0
+
     return {
         "format": "csv_labeled",
         "label_column": label_col,
+        "group_column": group_col,
+        "n_groups": n_groups,
         "signal_columns": sig_cols,
         "class_names": class_names,
         "class_counts": class_counts,

@@ -17,9 +17,10 @@ caller can hand it straight to dataset_loader.load_labeled_dataframe().
 from __future__ import annotations
 
 import io
+import re
 import zipfile
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -29,6 +30,15 @@ from backend.services.preprocess import _segment
 MAX_OUTPUT_ROWS = 50_000  # hard cap on generated samples to protect memory
 
 _TIME_COL_NAMES = {"time", "t", "timestamp", "seconds", "sec", "ms", "index"}
+
+# OpenBCI GUI exports `.txt` files that are comma-separated but prefixed
+# by 4–6 lines starting with `%` (free-form metadata). We strip those when
+# reading. Pattern below also tolerates leading whitespace some boards add.
+_OPENBCI_COMMENT_RE = re.compile(rb"^\s*%")
+# Look for `%Sample Rate = 250 Hz` or `%Sample Rate = 250.0 Hz` in the header.
+_OPENBCI_SR_RE = re.compile(
+    rb"%\s*Sample\s*Rate\s*[:=]\s*(\d+(?:\.\d+)?)", re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +81,11 @@ def inspect_upload(filename: str, file_bytes: bytes) -> dict:
 
 
 def _inspect_csv(file_bytes: bytes, filename: str) -> dict:
-    df = _read_csv_bytes(file_bytes)
+    df = _read_signal_bytes(file_bytes)
+    obci = _parse_openbci_header(file_bytes)
+    sr = _guess_sampling_rate(df)
+    if sr is None and "sample_rate" in obci:
+        sr = obci["sample_rate"]
     return {
         "kind": "csv",
         "files": [{
@@ -83,7 +97,9 @@ def _inspect_csv(file_bytes: bytes, filename: str) -> dict:
         "columns": list(df.columns),
         "row_count": len(df),
         "suggested_signal_col": _guess_signal_column(df),
-        "suggested_sampling_rate": _guess_sampling_rate(df),
+        "suggested_signal_col_indices": _guess_signal_columns(df),
+        "suggested_sampling_rate": sr,
+        "openbci_detected": bool(obci),
         "class_folders": None,
     }
 
@@ -94,20 +110,23 @@ def _inspect_zip(file_bytes: bytes) -> dict:
     first_columns: list[str] = []
     first_rows = 0
     suggested_sig = 0
+    suggested_sig_idxs: list[int] = []
     suggested_sr: float | None = None
+    openbci_detected = False
 
     with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
         for name in zf.namelist():
             parts = Path(name).parts
             if any(p.startswith("__") or p.startswith(".") for p in parts):
                 continue
-            if not name.lower().endswith(".csv"):
+            if not name.lower().endswith((".csv", ".txt")):
                 continue
             if len(parts) >= 2:
                 class_folders.add(parts[-2])
             try:
                 with zf.open(name) as fp:
-                    df = pd.read_csv(fp)
+                    raw = fp.read()
+                df = _read_csv_or_txt(name, raw)
             except Exception as exc:  # noqa: BLE001
                 files.append({"path": name, "columns": [], "rows": 0, "is_csv": True, "error": str(exc)})
                 continue
@@ -122,10 +141,16 @@ def _inspect_zip(file_bytes: bytes) -> dict:
                 first_columns = list(df.columns)
                 first_rows = len(df)
                 suggested_sig = _guess_signal_column(df)
+                suggested_sig_idxs = _guess_signal_columns(df)
                 suggested_sr = _guess_sampling_rate(df)
+                obci = _parse_openbci_header(raw)
+                if obci:
+                    openbci_detected = True
+                    if suggested_sr is None and "sample_rate" in obci:
+                        suggested_sr = obci["sample_rate"]
 
     if not files:
-        raise ValueError("ZIP contains no CSV files.")
+        raise ValueError("ZIP contains no CSV/TXT files.")
 
     return {
         "kind": "zip",
@@ -133,7 +158,9 @@ def _inspect_zip(file_bytes: bytes) -> dict:
         "columns": first_columns,
         "row_count": first_rows,
         "suggested_signal_col": suggested_sig,
+        "suggested_signal_col_indices": suggested_sig_idxs,
         "suggested_sampling_rate": suggested_sr,
+        "openbci_detected": openbci_detected,
         "class_folders": sorted(class_folders) or None,
     }
 
@@ -148,36 +175,60 @@ def segment_long_recordings(
     segment_length_sec: float,
     overlap_ratio: float = 0.0,
     signal_col_index: int = 0,
+    signal_col_indices: Sequence[int] | None = None,
+    stride_sec: float | None = None,
+    group_by: str = "recording",
 ) -> pd.DataFrame:
-    """Mode A: ZIP with class_folder/recording.csv. One long recording per CSV.
+    """Mode A: ZIP with ``class_folder/recording.{csv,txt}``. One long
+    recording per file. The immediate parent folder name becomes the
+    label.
 
-    The immediate parent folder name becomes the label.
+    Multi-channel: pass ``signal_col_indices=[2,3,4,5,6]`` to extract
+    five columns as a 5-channel signal (column index is 0-based against
+    the file's column order). Output columns are ``ch1_1..chC_S``.
+
+    OpenBCI ``.txt`` files (with leading ``%``-prefixed comment lines)
+    are accepted alongside ``.csv`` and read with a comment-aware parser.
+
+    Stride: when the protocol structure is ``[valid][rest]`` per
+    epoch (e.g. 1 s task + 4 s rest), set
+    ``segment_length_sec=valid_length`` and
+    ``stride_sec=epoch_length`` to skip the rest portion. When
+    ``stride_sec`` is ``None`` we fall back to the legacy
+    ``overlap_ratio`` semantics.
     """
-    _validate_window(sampling_rate, segment_length_sec, overlap_ratio)
+    _validate_window(sampling_rate, segment_length_sec, overlap_ratio, stride_sec)
+    indices = _resolve_signal_indices(signal_col_index, signal_col_indices)
+    n_channels = len(indices)
     seg_len = int(round(sampling_rate * segment_length_sec))
+    stride = int(round(sampling_rate * stride_sec)) if stride_sec else None
 
     rows: list[np.ndarray] = []
     labels: list[str] = []
+    groups: list[str] = []
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for name in zf.namelist():
             parts = Path(name).parts
             if any(p.startswith("__") or p.startswith(".") for p in parts):
                 continue
-            if not name.lower().endswith(".csv"):
+            if not name.lower().endswith((".csv", ".txt")):
                 continue
             if len(parts) < 2:
                 continue
             label = parts[-2]
             try:
                 with zf.open(name) as fp:
-                    df = pd.read_csv(fp)
+                    df = _read_csv_or_txt(name, fp.read())
             except Exception as exc:  # noqa: BLE001
                 raise ValueError(f"Failed to read '{name}': {exc}")
-            sig = _extract_signal(df, signal_col_index)
-            for seg in _segment(sig, seg_len, overlap_ratio):
+            sig = _extract_multi_signal(df, indices)
+            trial_idx = 0
+            for seg in _segment(sig, seg_len, overlap_ratio, stride=stride):
                 rows.append(seg)
                 labels.append(label)
+                groups.append(_group_id(name, trial_idx, group_by))
+                trial_idx += 1
                 if len(rows) > MAX_OUTPUT_ROWS:
                     raise ValueError(
                         f"Generated more than {MAX_OUTPUT_ROWS} segments — "
@@ -187,10 +238,10 @@ def segment_long_recordings(
     if not rows:
         raise ValueError(
             "No segments produced. Check sampling rate, segment length, and "
-            "that each class folder contains CSVs longer than one segment."
+            "that each class folder contains CSVs/TXTs longer than one segment."
         )
 
-    return _rows_to_df(rows, labels, seg_len)
+    return _rows_to_df(rows, labels, seg_len, groups, n_channels=n_channels)
 
 
 def segment_with_intervals(
@@ -200,22 +251,32 @@ def segment_with_intervals(
     segment_length_sec: float,
     overlap_ratio: float = 0.0,
     signal_col_index: int = 0,
+    signal_col_indices: Sequence[int] | None = None,
+    stride_sec: float | None = None,
+    filename: str = "upload.csv",
+    group_by: str = "recording",
 ) -> pd.DataFrame:
-    """Mode B: single long CSV + label intervals.
+    """Mode B: single long CSV/TXT + label intervals.
 
     intervals: [{"start_sec": float, "end_sec": float, "label": str}, ...]
+
+    Same multi-channel + OpenBCI .txt + stride extensions as Mode A.
     """
-    _validate_window(sampling_rate, segment_length_sec, overlap_ratio)
+    _validate_window(sampling_rate, segment_length_sec, overlap_ratio, stride_sec)
     if not intervals:
         raise ValueError("At least one interval is required.")
+    indices = _resolve_signal_indices(signal_col_index, signal_col_indices)
+    n_channels = len(indices)
     seg_len = int(round(sampling_rate * segment_length_sec))
+    stride = int(round(sampling_rate * stride_sec)) if stride_sec else None
 
-    df = _read_csv_bytes(csv_bytes)
-    sig = _extract_signal(df, signal_col_index)
+    df = _read_csv_or_txt(filename, csv_bytes)
+    sig = _extract_multi_signal(df, indices)
     duration_sec = len(sig) / sampling_rate
 
     rows: list[np.ndarray] = []
     labels: list[str] = []
+    groups: list[str] = []
     for i, iv in enumerate(intervals):
         try:
             start = float(iv["start_sec"])
@@ -234,9 +295,12 @@ def segment_with_intervals(
         s_idx = int(round(start * sampling_rate))
         e_idx = int(round(end * sampling_rate))
         slice_sig = sig[s_idx:e_idx]
-        for seg in _segment(slice_sig, seg_len, overlap_ratio):
+        trial_idx = 0
+        for seg in _segment(slice_sig, seg_len, overlap_ratio, stride=stride):
             rows.append(seg)
             labels.append(label)
+            groups.append(_group_id(f"interval_{i}", trial_idx, group_by))
+            trial_idx += 1
             if len(rows) > MAX_OUTPUT_ROWS:
                 raise ValueError(
                     f"Generated more than {MAX_OUTPUT_ROWS} segments — "
@@ -246,7 +310,7 @@ def segment_with_intervals(
     if not rows:
         raise ValueError("No segments produced from the given intervals.")
 
-    return _rows_to_df(rows, labels, seg_len)
+    return _rows_to_df(rows, labels, seg_len, groups, n_channels=n_channels)
 
 
 def segment_generic(
@@ -256,35 +320,43 @@ def segment_generic(
     sampling_rate: float,
     segment_length_sec: float,
     overlap_ratio: float = 0.0,
+    signal_col_indices: Sequence[int] | None = None,
+    stride_sec: float | None = None,
+    group_by: str = "recording",
 ) -> pd.DataFrame:
     """Mode C: generic ZIP, user provides per-file label mapping.
 
-    file_label_map: {"path/in/zip.csv": "ClassName", ...}. Files not in the
-    map are skipped. Each file is treated as one long recording windowed at
-    the given sampling rate / segment length.
+    Same multi-channel + OpenBCI .txt + stride extensions as Mode A.
     """
-    _validate_window(sampling_rate, segment_length_sec, overlap_ratio)
+    _validate_window(sampling_rate, segment_length_sec, overlap_ratio, stride_sec)
     if not file_label_map:
         raise ValueError("file_label_map is empty — assign at least one file a label.")
+    indices = _resolve_signal_indices(signal_col_index, signal_col_indices)
+    n_channels = len(indices)
     seg_len = int(round(sampling_rate * segment_length_sec))
+    stride = int(round(sampling_rate * stride_sec)) if stride_sec else None
 
     rows: list[np.ndarray] = []
     labels: list[str] = []
+    groups: list[str] = []
     matched_files: set[str] = set()
 
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        zip_files = {n for n in zf.namelist() if n.lower().endswith(".csv")}
+        zip_files = {n for n in zf.namelist() if n.lower().endswith((".csv", ".txt"))}
         for fname, label in file_label_map.items():
             if not label or not str(label).strip():
                 continue
             if fname not in zip_files:
                 raise ValueError(f"File '{fname}' from mapping not found in ZIP.")
             with zf.open(fname) as fp:
-                df = pd.read_csv(fp)
-            sig = _extract_signal(df, signal_col_index)
-            for seg in _segment(sig, seg_len, overlap_ratio):
+                df = _read_csv_or_txt(fname, fp.read())
+            sig = _extract_multi_signal(df, indices)
+            trial_idx = 0
+            for seg in _segment(sig, seg_len, overlap_ratio, stride=stride):
                 rows.append(seg)
                 labels.append(str(label).strip())
+                groups.append(_group_id(fname, trial_idx, group_by))
+                trial_idx += 1
                 matched_files.add(fname)
                 if len(rows) > MAX_OUTPUT_ROWS:
                     raise ValueError(
@@ -295,7 +367,7 @@ def segment_generic(
     if not rows:
         raise ValueError("No segments produced. Check labels and signal column.")
 
-    return _rows_to_df(rows, labels, seg_len)
+    return _rows_to_df(rows, labels, seg_len, groups, n_channels=n_channels)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +380,12 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def _validate_window(sr: float, seg_sec: float, overlap: float) -> None:
+def _validate_window(
+    sr: float,
+    seg_sec: float,
+    overlap: float,
+    stride_sec: float | None = None,
+) -> None:
     if sr <= 0:
         raise ValueError(f"sampling_rate must be > 0 (got {sr}).")
     if seg_sec <= 0:
@@ -317,6 +394,97 @@ def _validate_window(sr: float, seg_sec: float, overlap: float) -> None:
         raise ValueError(f"overlap_ratio must be in [0, 1) (got {overlap}).")
     if int(round(sr * seg_sec)) < 4:
         raise ValueError("Resulting segment length is < 4 samples — adjust SR or segment length.")
+    if stride_sec is not None:
+        if stride_sec <= 0:
+            raise ValueError(f"stride_sec must be > 0 (got {stride_sec}).")
+        if stride_sec < seg_sec:
+            raise ValueError(
+                f"stride_sec ({stride_sec}) must be ≥ segment_length_sec "
+                f"({seg_sec}) — otherwise consecutive segments would overlap "
+                "in unsigned ways. Use overlap_ratio for that case."
+            )
+
+
+def _read_signal_bytes(file_bytes: bytes) -> pd.DataFrame:
+    """Read CSV/TXT bytes into a DataFrame, tolerating OpenBCI-style headers.
+
+    OpenBCI GUI exports `.txt` files that begin with several `%`-prefixed
+    metadata lines followed by a header row and CSV-style data rows. We
+    strip the `%` lines, then let pandas parse the rest. Plain `.csv` files
+    pass through unchanged.
+    """
+    text = file_bytes.decode("utf-8", errors="replace")
+    # Drop leading comment lines starting with `%`. Doing this on the
+    # decoded text (not bytes) keeps line-ending handling sane on Windows.
+    lines = text.splitlines()
+    first_data_line = 0
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("%"):
+            first_data_line = i + 1
+            continue
+        break
+    cleaned = "\n".join(lines[first_data_line:])
+    return pd.read_csv(io.StringIO(cleaned))
+
+
+def _parse_openbci_header(file_bytes: bytes) -> dict:
+    """Scan the first ~4KB for OpenBCI-style metadata. Returns a dict that
+    may contain ``sample_rate`` (float). Empty dict if nothing found —
+    the inspect endpoint just uses this to suggest defaults."""
+    head = file_bytes[:4096]
+    info: dict = {}
+    m = _OPENBCI_SR_RE.search(head)
+    if m:
+        try:
+            info["sample_rate"] = float(m.group(1))
+        except ValueError:
+            pass
+    return info
+
+
+def _read_csv_or_txt(filename: str, file_bytes: bytes) -> pd.DataFrame:
+    """Dispatch to the comment-aware reader for `.txt` files; pandas for `.csv`."""
+    if filename.lower().endswith(".txt"):
+        return _read_signal_bytes(file_bytes)
+    # Plain CSV — but still tolerate `%` headers if the caller mislabels.
+    text = file_bytes.decode("utf-8", errors="replace")
+    if text.lstrip().startswith("%"):
+        return _read_signal_bytes(file_bytes)
+    return pd.read_csv(io.StringIO(text))
+
+
+def _resolve_signal_indices(
+    signal_col_index: int,
+    signal_col_indices: Sequence[int] | None,
+) -> list[int]:
+    """Return the (possibly multi-channel) list of column indices to extract."""
+    if signal_col_indices:
+        return list(signal_col_indices)
+    return [signal_col_index]
+
+
+_VALID_GROUP_BY = ("recording", "trial")
+
+
+def _group_id(source: str, trial_idx: int, group_by: str) -> str:
+    """Build the per-segment group id used by the trainer's group-aware
+    train/val/test split.
+
+    - ``recording`` (default): one group per source recording / interval.
+      Use this when each source file is a single contiguous trial.
+    - ``trial``: each emitted segment becomes its own group. Useful for
+      protocols where one long file contains many independent trials
+      separated by rest periods (e.g. OpenBCI 1 s task / 5 s epoch x 60).
+      With this, GroupShuffleSplit can scatter trials across train/val/
+      test even when there is only one source file per class.
+    """
+    if group_by not in _VALID_GROUP_BY:
+        raise ValueError(
+            f"group_by must be one of {_VALID_GROUP_BY} (got {group_by!r})."
+        )
+    if group_by == "trial":
+        return f"{source}#trial_{trial_idx}"
+    return source
 
 
 def _extract_signal(df: pd.DataFrame, signal_col_index: int) -> np.ndarray:
@@ -334,11 +502,77 @@ def _extract_signal(df: pd.DataFrame, signal_col_index: int) -> np.ndarray:
     return series.to_numpy(dtype=np.float32)
 
 
-def _rows_to_df(rows: list[np.ndarray], labels: list[str], seg_len: int) -> pd.DataFrame:
-    arr = np.stack(rows).astype(np.float32)
-    cols = [f"s{i+1}" for i in range(seg_len)]
+def _extract_multi_signal(
+    df: pd.DataFrame, indices: Sequence[int]
+) -> np.ndarray:
+    """Pull one or more columns by integer index. Returns ``(T,)`` when
+    ``len(indices) == 1`` and ``(T, C)`` when multi-channel.
+
+    Rows where any selected column is non-numeric are dropped together so
+    all channels stay time-aligned. This matters for OpenBCI exports
+    where the last few rows of a recording are sometimes truncated.
+    """
+    if df.empty:
+        raise ValueError("File has no rows.")
+    n_cols = len(df.columns)
+    bad = [i for i in indices if i < 0 or i >= n_cols]
+    if bad:
+        raise ValueError(
+            f"signal_col_indices contains out-of-range entries {bad} "
+            f"(file has {n_cols} columns)."
+        )
+    cols = [df.columns[i] for i in indices]
+    sub = df[cols].apply(pd.to_numeric, errors="coerce").dropna()
+    if sub.empty:
+        raise ValueError(
+            f"Selected columns {cols} contain no aligned numeric rows."
+        )
+    arr = sub.to_numpy(dtype=np.float32)
+    if len(indices) == 1:
+        return arr[:, 0]
+    return arr
+
+
+def _rows_to_df(
+    rows: list[np.ndarray],
+    labels: list[str],
+    seg_len: int,
+    groups: list[str] | None = None,
+    n_channels: int = 1,
+) -> pd.DataFrame:
+    """Stack segment rows into the trainer's flat tabular format.
+
+    For ``n_channels == 1`` we keep the legacy ``s1..sN`` column names.
+    For multi-channel we emit ``ch{c}_{i}`` columns so the dataset
+    loader's channel-prefix regex auto-detects the structure and the
+    trainer can reshape into ``(N, C, L)`` for the 1-D CNN.
+    """
+    if n_channels <= 1:
+        arr = np.stack(rows).astype(np.float32)
+        cols = [f"s{i+1}" for i in range(seg_len)]
+    else:
+        # Each row is shape (seg_len, n_channels). Stack to
+        # (N, seg_len, n_channels), then transpose to (N, n_channels,
+        # seg_len) and flatten so columns end up grouped by channel:
+        # ch1_1..ch1_S, ch2_1..ch2_S, ...
+        stacked = np.stack(rows).astype(np.float32)
+        if stacked.ndim != 3 or stacked.shape[1] != seg_len or stacked.shape[2] != n_channels:
+            raise ValueError(
+                f"Unexpected multi-channel segment shape {stacked.shape}; "
+                f"expected (N, {seg_len}, {n_channels})."
+            )
+        transposed = np.transpose(stacked, (0, 2, 1))
+        arr = transposed.reshape(stacked.shape[0], n_channels * seg_len)
+        cols = []
+        for ch in range(1, n_channels + 1):
+            cols.extend([f"ch{ch}_{i+1}" for i in range(seg_len)])
     out = pd.DataFrame(arr, columns=cols)
     out["label"] = labels
+    # __group__ is a recording / trial id used by the trainer for group-aware
+    # train/val/test splits — segments from the same source recording must
+    # not leak across splits, otherwise validation accuracy is inflated.
+    if groups is not None:
+        out["__group__"] = groups
     return out
 
 
@@ -347,17 +581,78 @@ def _read_csv_bytes(data: bytes) -> pd.DataFrame:
     return pd.read_csv(io.StringIO(text))
 
 
+_OPENBCI_NON_SIGNAL_HINTS = (
+    "sample index", "timestamp", "accel channel", "analog channel",
+    "other", "marker", "raw_uv", "ax", "ay", "az",
+)
+
+
+def _is_likely_non_signal(col_name: str) -> bool:
+    """Heuristic for OpenBCI bookkeeping columns we should skip when
+    auto-suggesting signal channels."""
+    name = str(col_name).strip().lower()
+    if name in _TIME_COL_NAMES:
+        return True
+    return any(hint in name for hint in _OPENBCI_NON_SIGNAL_HINTS)
+
+
+def _is_numeric_column(df: pd.DataFrame, col: str) -> bool:
+    try:
+        pd.to_numeric(df[col].head(20), errors="raise")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def _guess_signal_column(df: pd.DataFrame) -> int:
     """Pick the first numeric column whose name isn't a time/index marker."""
     for i, col in enumerate(df.columns):
-        if str(col).strip().lower() in _TIME_COL_NAMES:
+        if _is_likely_non_signal(col):
             continue
-        try:
-            pd.to_numeric(df[col].head(20), errors="raise")
+        if _is_numeric_column(df, col):
             return i
-        except (ValueError, TypeError):
-            continue
     return 0
+
+
+def _guess_signal_columns(df: pd.DataFrame) -> list[int]:
+    """Return a list of column indices that look like signal channels.
+
+    Strategy:
+      1. If any column name contains "EXG Channel" / "EEG Channel" /
+         "EMG Channel" (OpenBCI convention), pick exactly those — that's
+         the strongest signal we have.
+      2. Otherwise return the contiguous run of numeric, non-bookkeeping
+         columns. The run must contain ≥1 entry; when nothing qualifies
+         we fall back to the single best guess from
+         ``_guess_signal_column``.
+    """
+    cols = list(df.columns)
+    explicit = [
+        i for i, c in enumerate(cols)
+        if any(tag in str(c).lower() for tag in ("exg channel", "eeg channel", "emg channel"))
+    ]
+    if explicit:
+        return explicit
+
+    # Contiguous numeric, non-bookkeeping run
+    runs: list[list[int]] = []
+    cur: list[int] = []
+    for i, c in enumerate(cols):
+        if _is_likely_non_signal(c) or not _is_numeric_column(df, c):
+            if cur:
+                runs.append(cur)
+                cur = []
+            continue
+        cur.append(i)
+    if cur:
+        runs.append(cur)
+
+    if runs:
+        # Pick the longest run; ties broken by earliest start.
+        runs.sort(key=lambda r: (-len(r), r[0]))
+        return runs[0]
+
+    return [_guess_signal_column(df)]
 
 
 def _guess_sampling_rate(df: pd.DataFrame) -> float | None:

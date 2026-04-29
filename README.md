@@ -56,6 +56,8 @@ This:
 - In **Train**, pick a preset (Quick Test / Smart Auto / Publication Ready), click **Start Training**
 - After training, browse exports in **T6. Publication-Quality Figures** or jump to **My Models** to see your version chain
 
+> **⚠️ Always go through the Prep tab.** Uploading a pre-segmented CSV directly into the **Train** tab works, but the trainer can't tell which rows came from the same recording, so the train/val/test split degrades to per-row random — adjacent windows from one trial leak across splits and accuracy gets inflated (sometimes to a suspicious 100%). The Prep tab automatically writes a `__group__` column that makes the split group-aware. The training screen will warn you with a yellow banner if the group column is missing.
+
 ---
 
 ## Where your data lives
