@@ -405,13 +405,54 @@ def _validate_window(
             )
 
 
+def _looks_like_data(line: str) -> bool:
+    """True if `line` looks like a row of numeric data, not a header row.
+
+    Tolerates one trailing token that is a timestamp (``HH:MM:SS`` or
+    ``HH:MM:SS.sss``) — OpenBCI's headerless export ends each row with a
+    wall-clock timestamp string and we don't want to treat that lone
+    non-numeric token as evidence of a header.
+    """
+    parts = [p.strip() for p in line.split(",")]
+    if not parts or all(p == "" for p in parts):
+        return False
+    timestamp_re = re.compile(r"^\d{1,2}:\d{2}:\d{2}(?:\.\d+)?$")
+    saw_timestamp = False
+    for p in parts:
+        if not p:
+            continue
+        # Try numeric first (covers ints, floats, signed, exponential).
+        try:
+            float(p)
+            continue
+        except ValueError:
+            pass
+        # Allow exactly one trailing timestamp.
+        if not saw_timestamp and timestamp_re.match(p):
+            saw_timestamp = True
+            continue
+        return False
+    return True
+
+
 def _read_signal_bytes(file_bytes: bytes) -> pd.DataFrame:
     """Read CSV/TXT bytes into a DataFrame, tolerating OpenBCI-style headers.
 
-    OpenBCI GUI exports `.txt` files that begin with several `%`-prefixed
-    metadata lines followed by a header row and CSV-style data rows. We
-    strip the `%` lines, then let pandas parse the rest. Plain `.csv` files
-    pass through unchanged.
+    Two OpenBCI GUI export formats are handled:
+      1. Headered  : 4–6 ``%``-prefixed lines, then a comma-separated
+         column-name row, then data rows (e.g. ``Sample Index, EXG
+         Channel 0, ...``). We strip the ``%`` lines, pandas parses
+         the rest with the column-name row as the header.
+      2. Headerless: 4–6 ``%``-prefixed lines, then data rows directly
+         (e.g. ``0, 0.00, 0.00, ..., 18:51:16.059``). We detect this
+         by sniffing the first non-comment line — if it parses as
+         all-numeric (with at most one trailing ``HH:MM:SS`` token),
+         we feed it to pandas with ``header=None`` and assign synthetic
+         column names ``c0..cN`` so downstream column-index lookups
+         still work.
+
+    Plain ``.csv`` files without a header row are also handled by the
+    same headerless detection.
     """
     text = file_bytes.decode("utf-8", errors="replace")
     # Drop leading comment lines starting with `%`. Doing this on the
@@ -424,6 +465,16 @@ def _read_signal_bytes(file_bytes: bytes) -> pd.DataFrame:
             continue
         break
     cleaned = "\n".join(lines[first_data_line:])
+    # Sniff the first non-comment line: if it's all numeric (with an
+    # optional trailing timestamp), the file is headerless.
+    probe = lines[first_data_line] if first_data_line < len(lines) else ""
+    if _looks_like_data(probe):
+        # Use the first row to determine column count, then assign
+        # synthetic names so pd.read_csv has stable headers and the
+        # caller can index by integer position as usual.
+        n_cols = len([p for p in probe.split(",") if p.strip() != ""])
+        names = [f"c{i}" for i in range(n_cols)]
+        return pd.read_csv(io.StringIO(cleaned), header=None, names=names)
     return pd.read_csv(io.StringIO(cleaned))
 
 
@@ -604,6 +655,56 @@ def _is_numeric_column(df: pd.DataFrame, col: str) -> bool:
         return False
 
 
+def _is_useless_signal_column(df: pd.DataFrame, col: str, sample_rows: int = 500) -> bool:
+    """True if the column is numeric but carries no signal:
+
+    - Constant or near-constant (one value dominates ≥95% of samples).
+      Catches disconnected channels saturated at the ADC rail (OpenBCI
+      reports ``-187500.02`` for unplugged EXG inputs) and unmoving
+      accelerometer axes.
+    - Monotonically-increasing or 0–255 wrap-around integer
+      sample-index column. OpenBCI's leading column counts samples
+      mod 256 — so ``nunique`` for the first 500 rows is exactly 256
+      and the diff sequence is mostly +1 with periodic ``-255`` jumps.
+
+    Sniffs only the first ``sample_rows`` rows for speed; OpenBCI files
+    can be hundreds of thousands of rows long.
+    """
+    try:
+        s = pd.to_numeric(df[col].head(sample_rows), errors="coerce").dropna()
+    except Exception:  # noqa: BLE001
+        return True
+    if s.empty:
+        return True
+
+    # Modal-fraction saturation check. Catches a single rail value
+    # dominating the column (e.g. -187500.02 for ≥99% of rows after
+    # the first sample).
+    counts = s.value_counts(normalize=True)
+    if counts.iloc[0] >= 0.95:
+        return True
+
+    arr = s.to_numpy()
+    if arr.size >= 2:
+        # Pure monotonic +1 (rare in practice — OpenBCI wraps).
+        diffs = np.diff(arr)
+        if np.all(diffs == 1) and float(arr[0]).is_integer():
+            return True
+        # OpenBCI sample-index pattern: int values in [0, 255] cycling
+        # repeatedly. Diff is +1 most of the time with periodic -255
+        # resets at the wrap.
+        if (
+            np.issubdtype(arr.dtype, np.integer)
+            or (np.all(np.equal(np.mod(arr, 1), 0)) and arr.min() >= 0)
+        ):
+            ints = arr.astype(np.int64)
+            if ints.min() >= 0 and ints.max() <= 255:
+                d = np.diff(ints)
+                if np.mean(d == 1) > 0.95:  # ≥95% +1 steps + occasional resets
+                    return True
+    return False
+
+
 def _guess_signal_column(df: pd.DataFrame) -> int:
     """Pick the first numeric column whose name isn't a time/index marker."""
     for i, col in enumerate(df.columns):
@@ -634,11 +735,18 @@ def _guess_signal_columns(df: pd.DataFrame) -> list[int]:
     if explicit:
         return explicit
 
-    # Contiguous numeric, non-bookkeeping run
+    # Contiguous numeric, non-bookkeeping, non-useless run. "Useless"
+    # filters out the OpenBCI sample-index column, zero-variance accel
+    # channels, and disconnected channels saturated at the ADC rail —
+    # all of which are technically numeric but carry no signal.
     runs: list[list[int]] = []
     cur: list[int] = []
     for i, c in enumerate(cols):
-        if _is_likely_non_signal(c) or not _is_numeric_column(df, c):
+        if (
+            _is_likely_non_signal(c)
+            or not _is_numeric_column(df, c)
+            or _is_useless_signal_column(df, c)
+        ):
             if cur:
                 runs.append(cur)
                 cur = []
