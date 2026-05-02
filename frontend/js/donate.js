@@ -9,7 +9,7 @@
  *     once (gives us a chance to refresh the message / QR / perks)
  *   - Closes on Esc or clicking the dim backdrop
  *
- * State key: localStorage["biospark-donate-dismissed-v0.1"]
+ * State key: localStorage["biospark-donate-dismissed-v0.2"]
  *   value "1" = user opted out for this version
  */
 
