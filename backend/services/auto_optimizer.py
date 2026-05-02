@@ -226,6 +226,121 @@ def select_architecture(
 
 
 # ---------------------------------------------------------------------------
+# Architecture Recommendation (CNN vs Hybrid)
+# ---------------------------------------------------------------------------
+
+def recommend_architecture(
+    n_samples: int,
+    n_channels: int,
+    signal_length: int,
+    n_groups: int = 1,
+) -> dict:
+    """Recommend ``cnn`` or ``hybrid`` based on dataset characteristics.
+
+    Decision rules (conservative — when in doubt, prefer CNN):
+        1. Few samples (<500) or few groups (<5) → cnn (Transformer overfits).
+        2. Short sequences (<128) → cnn (no long-range dependencies to model).
+        3. Many samples (≥500) + long sequences (≥256) + multi-channel (≥2) → hybrid.
+        4. Very many samples (≥2000) → hybrid (capacity warranted).
+        5. Otherwise → cnn (safe default).
+
+    Returns
+    -------
+    dict with keys:
+        - ``recommended``: "cnn" | "hybrid"
+        - ``confidence``: float in [0, 1]
+        - ``reason_zh``: Chinese rationale string
+        - ``reason_en``: English rationale string
+        - ``data_profile``: echo of input stats
+        - ``alternatives``: list of {arch, tradeoff_zh, tradeoff_en}
+    """
+    profile = {
+        "n_samples": int(n_samples),
+        "n_channels": int(n_channels),
+        "signal_length": int(signal_length),
+        "n_groups": int(n_groups),
+    }
+
+    if n_samples < 500 or n_groups < 5:
+        rec = "cnn"
+        conf = 0.85
+        reason_zh = (
+            f"推荐 1D-CNN：样本数 {n_samples} / 被试组数 {n_groups} 偏少，"
+            f"混合模型在小样本上容易过拟合。"
+        )
+        reason_en = (
+            f"Recommend 1D-CNN: only {n_samples} samples / {n_groups} groups — "
+            f"hybrid model would likely overfit on this scale."
+        )
+    elif signal_length < 128:
+        rec = "cnn"
+        conf = 0.80
+        reason_zh = (
+            f"推荐 1D-CNN：序列长度 {signal_length} 偏短，"
+            f"自注意力没有足够的长程依赖可建模。"
+        )
+        reason_en = (
+            f"Recommend 1D-CNN: sequence length {signal_length} is too short — "
+            f"self-attention has little long-range dependency to model."
+        )
+    elif n_samples >= 500 and signal_length >= 256 and n_channels >= 2:
+        rec = "hybrid"
+        conf = 0.85
+        reason_zh = (
+            f"推荐混合模型：{n_channels} 通道 × {signal_length} 采样点 × "
+            f"{n_samples} 段，注意力可建模长程依赖与通道间交互。"
+        )
+        reason_en = (
+            f"Recommend hybrid: {n_channels}ch × {signal_length} samples × "
+            f"{n_samples} segments — attention can model long-range and cross-channel interactions."
+        )
+    elif n_samples >= 2000:
+        rec = "hybrid"
+        conf = 0.75
+        reason_zh = (
+            f"推荐混合模型：样本数 {n_samples} 充足，"
+            f"足以训练更高容量的注意力模型。"
+        )
+        reason_en = (
+            f"Recommend hybrid: {n_samples} samples is enough to train a higher-capacity attention model."
+        )
+    else:
+        rec = "cnn"
+        conf = 0.65
+        reason_zh = (
+            f"推荐 1D-CNN：数据规模处于中间区间（{n_samples} 段 / "
+            f"{signal_length} 采样点 / {n_channels} 通道），保守起见先用基线模型。"
+        )
+        reason_en = (
+            f"Recommend 1D-CNN: dataset is in the middle range "
+            f"({n_samples} segs / {signal_length} samples / {n_channels} ch) — "
+            f"start with the baseline."
+        )
+
+    alternatives = [
+        {
+            "arch": "cnn",
+            "tradeoff_zh": "训练更快，参数量约 44K；适合快速验证基线。",
+            "tradeoff_en": "Faster training, ~44K params; good for baseline validation.",
+        },
+        {
+            "arch": "hybrid",
+            "tradeoff_zh": "参数量约 350K；可能高 2–5% 准确率，训练时间约为 CNN 的 2 倍。",
+            "tradeoff_en": "~350K params; potentially +2–5% accuracy at ~2x training time.",
+        },
+    ]
+
+    return {
+        "recommended": rec,
+        "confidence": conf,
+        "reason_zh": reason_zh,
+        "reason_en": reason_en,
+        "data_profile": profile,
+        "alternatives": alternatives,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Early Stopping
 # ---------------------------------------------------------------------------
 
@@ -272,7 +387,14 @@ class DataQualityAssessor:
     plain-language warnings before the user starts training.
     """
 
-    def assess(self, X: np.ndarray, y: np.ndarray, class_names: list) -> dict:
+    def assess(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        class_names: list,
+        n_channels: int = 1,
+        groups: Optional[np.ndarray] = None,
+    ) -> dict:
         """Run all quality checks.
 
         Parameters
@@ -280,11 +402,14 @@ class DataQualityAssessor:
         X : ndarray of shape (N, features)
         y : ndarray of shape (N,) with integer class indices
         class_names : list of class label strings
+        n_channels : effective channel count (passed by caller; defaults to 1)
+        groups : optional per-sample group ids for recording-aware stats
 
         Returns
         -------
         dict with keys: issues, quality_score (0-100), ready_to_train,
-                        sample_count, class_distribution
+                        sample_count, class_distribution, data_profile,
+                        architecture_recommendation
         """
         issues = []
         n_samples = len(X)
@@ -375,6 +500,32 @@ class DataQualityAssessor:
         # ── Per-class distribution ──
         class_dist = {class_names[i]: int(counts[i]) for i in range(n_classes)}
 
+        # ── Data profile + architecture recommendation ──
+        total_features = int(X.shape[1]) if X.ndim >= 2 else 0
+        ch = max(1, int(n_channels))
+        signal_length = total_features // ch if ch > 0 else total_features
+        if groups is not None and len(groups) > 0:
+            n_groups = int(len(np.unique(np.asarray(groups))))
+        else:
+            n_groups = 1
+
+        data_profile = {
+            "n_samples": int(n_samples),
+            "n_channels": ch,
+            "signal_length": int(signal_length),
+            "n_groups": int(n_groups),
+            "n_classes": int(n_classes),
+        }
+        try:
+            arch_rec = recommend_architecture(
+                n_samples=n_samples,
+                n_channels=ch,
+                signal_length=signal_length,
+                n_groups=n_groups,
+            )
+        except Exception:
+            arch_rec = None
+
         return {
             "issues": issues,
             "quality_score": quality_score,
@@ -382,4 +533,6 @@ class DataQualityAssessor:
             "sample_count": n_samples,
             "n_classes": n_classes,
             "class_distribution": class_dist,
+            "data_profile": data_profile,
+            "architecture_recommendation": arch_rec,
         }

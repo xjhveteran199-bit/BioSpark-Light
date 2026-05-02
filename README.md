@@ -74,7 +74,7 @@ BioSpark-Light is the **standalone desktop spin-off** of [BioSpark](https://gith
   v0.2 计划新增：<br>
   🔥 <strong>Grad-CAM 热力图</strong> — 看模型到底学到了什么<br>
   📦 <strong>ONNX / TorchScript 导出</strong> — 把模型嵌入到 C++ / 移动端<br>
-  🧠 <strong>Transformer1D 架构</strong> — 不止 CNN
+  🧠 <strong>1D-CNN + Transformer 混合架构</strong> — 系统按数据自动推荐 CNN / 混合，多通道长序列效果更好
 </p>
 
 <p align="center">

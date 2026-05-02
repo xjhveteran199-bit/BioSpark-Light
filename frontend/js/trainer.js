@@ -15,6 +15,9 @@ const Trainer = (() => {
     let totalEpochs = 30;
     let history = [];        // [{epoch, train_loss, val_loss, train_acc, val_acc}]
     let selectedPreset = 'auto';  // v0.8: selected training preset
+    let selectedArch = 'auto';    // v0.2: 'auto' | 'cnn' | 'hybrid'
+    let archRecommendation = null; // cached recommendation from /train/assess
+    let lastAssessData = null;     // cached assess response for client-side re-render
 
     const CLASS_COLORS = [
         '#06b6d4', '#a78bfa', '#34d399', '#fbbf24', '#f87171',
@@ -399,6 +402,7 @@ const Trainer = (() => {
     }
 
     function _renderQualityBanner(banner, data) {
+        lastAssessData = data;
         const isZh = App.lang === 'zh';
         const score = data.quality_score;
         const issues = data.issues || [];
@@ -423,6 +427,10 @@ const Trainer = (() => {
 
         const noIssueText = isZh ? '数据质量良好，可以开始训练。' : 'Data quality looks good — ready to train.';
 
+        // v0.2: cache recommendation so _startTraining can pick it up
+        archRecommendation = data.architecture_recommendation || null;
+        const profile = data.data_profile || null;
+
         banner.innerHTML = `
             <div class="quality-banner ${scoreClass}">
                 <div class="quality-score-row">
@@ -437,8 +445,81 @@ const Trainer = (() => {
                     </div>
                 </div>
                 ${issues.length > 0 ? issueHTML : `<div style="font-size:0.85rem;color:var(--text-secondary);padding-top:0.5rem;border-top:1px solid var(--border)">${noIssueText}</div>`}
+                ${_renderArchRecommendation(archRecommendation, profile, isZh)}
             </div>`;
         banner.classList.remove('hidden');
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // v0.2 — Architecture recommendation + manual override
+    // ───────────────────────────────────────────────────────────
+
+    function _renderArchRecommendation(rec, profile, isZh) {
+        if (!rec) return '';
+        const recommended = rec.recommended;
+        const reason = isZh ? rec.reason_zh : rec.reason_en;
+        const confPct = Math.round((rec.confidence || 0) * 100);
+        const profStr = profile ? `
+            <div class="arch-profile">
+                <span><b>${profile.n_samples}</b> ${isZh ? '段' : 'segs'}</span>
+                <span><b>${profile.n_channels}</b> ${isZh ? '通道' : 'ch'}</span>
+                <span><b>${profile.signal_length}</b> ${isZh ? '采样点' : 'samples'}</span>
+                <span><b>${profile.n_groups}</b> ${isZh ? '组' : 'groups'}</span>
+                <span><b>${profile.n_classes}</b> ${isZh ? '类' : 'classes'}</span>
+            </div>` : '';
+
+        const archOptions = [
+            {
+                id: 'auto',
+                label: isZh ? `自动（推荐 ${recommended === 'hybrid' ? '混合' : '1D-CNN'}）`
+                            : `Auto (recommend ${recommended === 'hybrid' ? 'hybrid' : '1D-CNN'})`,
+                tradeoff: '',
+            },
+            {
+                id: 'cnn',
+                label: isZh ? '1D-CNN（轻量 ~44K 参数）' : '1D-CNN (lightweight ~44K params)',
+                tradeoff: isZh
+                    ? '训练更快；适合小样本 / 短序列 / 单通道。'
+                    : 'Faster training; best for small / short / single-channel data.',
+            },
+            {
+                id: 'hybrid',
+                label: isZh ? '1D-CNN + Transformer 混合（~350K 参数）' : '1D-CNN + Transformer hybrid (~350K params)',
+                tradeoff: isZh
+                    ? '建模长程依赖与通道间交互；训练时间约 2 倍。'
+                    : 'Models long-range and cross-channel; ~2x training time.',
+            },
+        ];
+        const optsHTML = archOptions.map(o => `
+            <label class="arch-option${selectedArch === o.id ? ' selected' : ''}" data-arch="${o.id}">
+                <input type="radio" name="cfg-arch" value="${o.id}" ${selectedArch === o.id ? 'checked' : ''}
+                       onchange="Trainer._onArchChange('${o.id}')" />
+                <span class="arch-label">${o.label}</span>
+                ${o.tradeoff ? `<span class="arch-tradeoff">${o.tradeoff}</span>` : ''}
+            </label>`).join('');
+
+        const overrideNote = (selectedArch !== 'auto' && selectedArch !== recommended)
+            ? `<div class="arch-override-note">⚠ ${isZh ? '已覆盖系统推荐' : 'Overriding system recommendation'}</div>`
+            : '';
+
+        return `
+            <div class="arch-rec-block">
+                <div class="arch-rec-header">
+                    <strong>${isZh ? '模型架构推荐' : 'Architecture Recommendation'}</strong>
+                    <span class="arch-conf">${isZh ? '置信度' : 'Confidence'}: ${confPct}%</span>
+                </div>
+                <div class="arch-rec-reason">${reason}</div>
+                ${profStr}
+                <div class="arch-options">${optsHTML}</div>
+                ${overrideNote}
+            </div>`;
+    }
+
+    function _onArchChange(arch) {
+        selectedArch = arch;
+        // Re-render banner from cached data (no refetch)
+        const banner = document.getElementById('train-quality-banner');
+        if (banner && lastAssessData) _renderQualityBanner(banner, lastAssessData);
     }
 
     // ───────────────────────────────────────────────────────────
@@ -508,6 +589,7 @@ const Trainer = (() => {
                     use_class_weights: document.getElementById('cfg-class-weights')?.checked !== false,
                     lr_search: document.getElementById('cfg-lr-search')?.checked || false,
                     warm_start: document.getElementById('cfg-warm-start')?.checked || false,
+                    arch: selectedArch,
                 }),
             });
             if (!resp.ok) { const err = await resp.json(); throw new Error(err.detail || 'Failed to start'); }
@@ -1045,7 +1127,7 @@ const Trainer = (() => {
     // Public
     return { init, openFilePicker, handleFile, reset: resetTrainer, _bindBrowseLink,
              exportModel, exportHistory, exportCM, exportTSNE, exportReport, toggleCMMode,
-             getJobId, loadDatasetById, _selectPresetAndConfigure };
+             getJobId, loadDatasetById, _selectPresetAndConfigure, _onArchChange };
 })();
 
 window.Trainer = Trainer;

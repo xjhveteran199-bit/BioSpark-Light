@@ -99,6 +99,114 @@ class Signal1DCNN(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Hybrid 1D-CNN + Transformer (v0.2)
+# ---------------------------------------------------------------------------
+
+class Signal1DCNNTransformer(nn.Module):
+    """1D-CNN stem (local features) + Transformer encoder (long-range / cross-channel).
+
+    Designed for multi-channel biosignals where:
+      * Conv stem extracts local waveform morphology with strong inductive bias.
+      * Transformer attends over time tokens, modelling long-range dependencies
+        and (via the channel-mixed conv stem) cross-channel interactions.
+
+    Parameter budget: ~120K-280K depending on ``arch_config`` — between the
+    44K Signal1DCNN baseline and a full 1M+ Transformer.
+    """
+
+    def __init__(self, n_classes: int, in_channels: int = 1, arch_config: dict | None = None):
+        super().__init__()
+        self.in_channels = in_channels
+
+        if arch_config is not None:
+            ks = arch_config.get("kernel_sizes", [7, 5])
+            ch = arch_config.get("channels", [32, 64])
+            d_model = arch_config.get("d_model", 128)
+            nhead = arch_config.get("nhead", 4)
+            num_layers = arch_config.get("num_layers", 2)
+            dim_ff = arch_config.get("dim_feedforward", 256)
+            dropout = arch_config.get("transformer_dropout", 0.1)
+            d1 = arch_config.get("dropout1", 0.3)
+            d2 = arch_config.get("dropout2", 0.2)
+            fc_h = arch_config.get("fc_hidden", 64)
+            max_tokens = arch_config.get("max_tokens", 512)
+        else:
+            ks = [7, 5]
+            ch = [32, 64]
+            d_model = 128
+            nhead = 4
+            num_layers = 2
+            dim_ff = 256
+            dropout = 0.1
+            d1, d2 = 0.3, 0.2
+            fc_h = 64
+            max_tokens = 512
+
+        self.arch_config = arch_config
+        self._feat_dim = d_model
+
+        # Conv stem: 2 blocks, downsample 4x (keeps time axis for Transformer)
+        self.conv_stem = nn.Sequential(
+            nn.Conv1d(in_channels, ch[0], kernel_size=ks[0], padding=ks[0] // 2),
+            nn.BatchNorm1d(ch[0]),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+            nn.Conv1d(ch[0], ch[1], kernel_size=ks[1], padding=ks[1] // 2),
+            nn.BatchNorm1d(ch[1]),
+            nn.ReLU(),
+            nn.MaxPool1d(2),
+        )
+        # Patch embed: 1x1 conv lifts channel dim to d_model
+        self.patch_embed = nn.Conv1d(ch[1], d_model, kernel_size=1)
+        # Learnable positional encoding (sized to max plausible token count)
+        self.pos_embed = nn.Parameter(torch.zeros(1, max_tokens, d_model))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_ff,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(d1),
+            nn.Linear(d_model, fc_h),
+            nn.ReLU(),
+            nn.Dropout(d2),
+            nn.Linear(fc_h, n_classes),
+        )
+
+    def _to_tokens(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv_stem(x)              # (B, ch[1], L/4)
+        x = self.patch_embed(x)            # (B, d_model, L/4)
+        x = x.transpose(1, 2)              # (B, L/4, d_model)
+        L = x.size(1)
+        if L > self.pos_embed.size(1):
+            # Sequence longer than allocated positional table; truncate.
+            x = x[:, : self.pos_embed.size(1), :]
+            L = x.size(1)
+        x = x + self.pos_embed[:, :L, :]
+        return x
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self._to_tokens(x)
+        x = self.transformer(x)            # (B, L/4, d_model)
+        x = x.mean(dim=1)                  # (B, d_model) — mean-pool over time
+        return self.classifier(x)
+
+    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Return pooled feature vector (pre-classifier) for t-SNE."""
+        x = self._to_tokens(x)
+        x = self.transformer(x)
+        return x.mean(dim=1)
+
+
+# ---------------------------------------------------------------------------
 # Training job state
 # ---------------------------------------------------------------------------
 
@@ -121,7 +229,11 @@ class TrainingJob:
         self.history: list[dict] = []         # per-epoch metrics
         self.best_val_acc: float = 0.0
         self.error: Optional[str] = None
-        self.model: Optional[Signal1DCNN] = None
+        self.model: Optional[nn.Module] = None
+        # v0.2: architecture mode (set during _run_training).
+        self.arch_type: str = "cnn"  # "cnn" | "hybrid"
+        self.arch_recommendation: Optional[dict] = None
+        self.user_overrode_recommendation: bool = False
         self.val_X: Optional[np.ndarray] = None
         self.val_y: Optional[np.ndarray] = None
         self.test_X: Optional[np.ndarray] = None
@@ -483,10 +595,43 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray, groups: np.nda
             patience = cfg.get("early_stopping_patience", 10)
             early_stopper = EarlyStopping(patience=patience)
 
+        # ----- Architecture selection: cnn vs hybrid -----
+        # cfg["arch"] is one of 'auto' | 'cnn' | 'hybrid'.  When 'auto', call
+        # recommend_architecture() to pick based on dataset characteristics.
+        # The resolved arch_type is stored on the job for downstream UI / export.
+        from backend.services.auto_optimizer import recommend_architecture
+        arch_request = (cfg.get("arch") or "auto").lower()
+        if arch_request == "auto":
+            rec = recommend_architecture(
+                n_samples=n_samples,
+                n_channels=n_channels,
+                signal_length=signal_len,
+                n_groups=job.n_groups or 1,
+            )
+            arch_type = rec["recommended"]
+            job.arch_recommendation = rec
+            job.user_overrode_recommendation = False
+        else:
+            arch_type = "hybrid" if arch_request == "hybrid" else "cnn"
+            rec = recommend_architecture(
+                n_samples=n_samples,
+                n_channels=n_channels,
+                signal_length=signal_len,
+                n_groups=job.n_groups or 1,
+            )
+            job.arch_recommendation = rec
+            job.user_overrode_recommendation = (rec["recommended"] != arch_type)
+        job.arch_type = arch_type
+
         # Model
-        model = Signal1DCNN(
-            n_classes=n_classes, in_channels=n_channels, arch_config=arch_config,
-        ).to(device)
+        if arch_type == "hybrid":
+            model = Signal1DCNNTransformer(
+                n_classes=n_classes, in_channels=n_channels, arch_config=arch_config,
+            ).to(device)
+        else:
+            model = Signal1DCNN(
+                n_classes=n_classes, in_channels=n_channels, arch_config=arch_config,
+            ).to(device)
 
         # Record signal length on the job for downstream persistence.
         job.signal_length = signal_len
@@ -601,12 +746,16 @@ def _run_training(job: TrainingJob, X: np.ndarray, y: np.ndarray, groups: np.nda
             "n_classes": n_classes,
             "device": str(device),
             "split": job.split_info,
+            "model_arch": job.arch_type,
+            "user_overrode_recommendation": job.user_overrode_recommendation,
         }
         if auto_mode:
             start_payload["auto_mode"] = True
             start_payload["suggested_lr"] = suggested_lr
             if arch_config:
                 start_payload["arch_config"] = arch_config
+        if job.arch_recommendation is not None:
+            start_payload["arch_recommendation"] = job.arch_recommendation
         job._emit(start_payload)
 
         actual_epochs = epochs

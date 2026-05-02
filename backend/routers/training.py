@@ -192,6 +192,10 @@ class TrainStartRequest(BaseModel):
     use_class_weights: bool = Field(default=True)
     lr_search: Optional[bool] = Field(default=None)
     warm_start: bool = Field(default=False)
+    arch: str = Field(
+        default="auto",
+        description="Model architecture: 'auto' (system recommend), 'cnn' (1D-CNN), or 'hybrid' (1D-CNN + Transformer).",
+    )
 
 
 @router.post("/train/assess")
@@ -203,10 +207,13 @@ async def assess_dataset(dataset_id: str):
     try:
         from backend.services.auto_optimizer import DataQualityAssessor
         trainer = _get_trainer()
-        X, y, class_names, _groups = trainer._dataset_to_tensors(
+        X, y, class_names, groups = trainer._dataset_to_tensors(
             entry["file_bytes"], entry["filename"], entry["summary"]
         )
-        result = DataQualityAssessor().assess(X, y, class_names)
+        n_channels = int(entry["summary"].get("n_channels", 1) or 1)
+        result = DataQualityAssessor().assess(
+            X, y, class_names, n_channels=n_channels, groups=groups,
+        )
         return {"dataset_id": dataset_id, **result}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Assessment failed: {exc}")
@@ -270,6 +277,7 @@ def _make_on_complete(
                         "signal_length": int(job.signal_length or 0),
                     },
                     "arch_config": job.model.arch_config if job.model is not None else None,
+                    "arch_type": getattr(job, "arch_type", "cnn"),
                 }
                 torch.save(payload, str(file_path))
 
@@ -360,7 +368,15 @@ async def start_training(req: TrainStartRequest):
             else preset_cfg.get("lr_search", False)
         ),
         "warm_start": req.warm_start,
+        "arch": (req.arch or "auto").lower(),
     }
+    # Validate arch value early so the error surfaces in the API call, not the
+    # background training thread.
+    if config["arch"] not in {"auto", "cnn", "hybrid"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid arch '{req.arch}'. Must be one of: auto, cnn, hybrid.",
+        )
 
     job_id = str(uuid.uuid4())[:8]
     user_id = _DEFAULT_USER_ID
@@ -417,6 +433,9 @@ async def get_training_status(job_id: str):
         "error": job.error,
         "class_names": job.class_names,
         "config": job.config,
+        "arch_type": getattr(job, "arch_type", "cnn"),
+        "user_overrode_recommendation": getattr(job, "user_overrode_recommendation", False),
+        "arch_recommendation": getattr(job, "arch_recommendation", None),
     }
 
 

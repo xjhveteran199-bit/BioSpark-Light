@@ -211,14 +211,32 @@ Otherwise you can upload a pre-prepared training CSV directly (one with `__group
 | **🏆 Publication Ready** | Final pre-submission run | 15–45 min | 100 epochs + LR search |
 | **⚙️ Custom** | Full manual | Your call | When you want full control |
 
-### 5.3 Two pre-flight banners (both yellow warnings)
+### 5.3 Model architecture selection (new in v0.2)
+
+After upload, the data-quality card shows a **Model Architecture Recommendation** block. The system picks one of two architectures based on your data:
+
+| Arch | Class | Params | Best for |
+|------|-------|--------|----------|
+| **1D-CNN** | `Signal1DCNN` | ~44K | Small / short / single-channel data |
+| **1D-CNN + Transformer hybrid** | `Signal1DCNNTransformer` | ~350K | Long sequences, multi-channel, sufficient samples |
+
+**Decision rules** (confidence shown alongside):
+- `n_samples < 500` or `n_groups < 5` → CNN (hybrid would overfit)
+- `signal_length < 128` → CNN (no long-range dependencies to model)
+- `n_samples ≥ 500` + `signal_length ≥ 256` + multi-channel → hybrid
+- `n_samples ≥ 2000` → hybrid
+- Otherwise → CNN (safe default)
+
+Three radios appear: **Auto (system recommends)** / **1D-CNN** / **1D-CNN + Transformer hybrid**. Override the recommendation if you know the data better — an "⚠ Overriding system recommendation" tag appears, and the override is recorded in job metadata for ablation reporting.
+
+### 5.4 Two pre-flight banners (both yellow warnings)
 
 | Banner | Meaning | What to do |
 |--------|---------|------------|
 | ⚠️ This dataset has no `__group__` column | You uploaded a pre-segmented CSV, skipping Prep | Go back to Prep |
 | (visible when Overlap > 0) | Overlap_ratio is set above zero | Set to 0 unless you have a reason |
 
-### 5.4 Training config (shown only in Custom)
+### 5.5 Training config (shown only in Custom)
 
 You usually don't need to touch these, but for Custom:
 
@@ -234,7 +252,7 @@ You usually don't need to touch these, but for Custom:
 | Search optimal LR | ✗ | Only for Publication Ready |
 | **Continue from previous model** (warm-start) | ✗ | See §7 |
 
-### 5.5 Start training → check the first log line
+### 5.6 Start training → check the first log line
 
 Click **Start Training**. The moment the WebSocket connects, the first epoch-log line displays the **split mode**:
 
@@ -245,7 +263,7 @@ Click **Start Training**. The moment the WebSocket connects, the first epoch-log
 
 If you see yellow, **stop the run immediately** and go back to Prep (or accept that this dataset can't do group-split).
 
-### 5.6 How to read the curves
+### 5.7 How to read the curves
 
 | Pattern | Train loss | Val loss | Verdict |
 |---------|-----------|----------|---------|
