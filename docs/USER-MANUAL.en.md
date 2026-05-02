@@ -1,6 +1,6 @@
 # BioSpark-Light User Manual
 
-> **Document version**: aligned with BioSpark-Light v0.1.1
+> **Document version**: aligned with BioSpark-Light v0.2.0
 > **Audience**: anyone picking up BioSpark-Light for the first time who wants to walk the entire path from raw recordings to a trained model.
 > **中文版本**: see [USER-MANUAL.md](USER-MANUAL.md).
 
@@ -704,5 +704,5 @@ Yes. Chinese / Japanese / Korean labels work and display correctly in the confus
 
 ---
 
-*BioSpark-Light · v0.1.1 · User Manual · Compiled 2026-04-30*
+*BioSpark-Light · v0.2.0 · User Manual · v0.2 update 2026-05-03*
 *Co-authored by xjhveteran199-bit and Claude Opus 4.7. The real-data example (§8) uses subject LIU's 5-gesture OpenBCI Cyton recording.*

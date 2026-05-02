@@ -13,7 +13,7 @@
  *   value "1" = user opted out for this version
  */
 
-const DONATE_VERSION = '0.1';
+const DONATE_VERSION = '0.2';
 const DONATE_KEY = `biospark-donate-dismissed-v${DONATE_VERSION}`;
 
 const Donate = {

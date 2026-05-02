@@ -66,21 +66,26 @@ BioSpark-Light is the **standalone desktop spin-off** of [BioSpark](https://gith
 <p align="center">⬇️</p>
 
 <h3 align="center">
-  v0.2 上线时，<strong>免费送你激活码</strong> 🎉<br>
-  Free <strong>v0.2 activation key</strong> when it ships 🎉
+  v0.3 上线时，<strong>免费送你激活码</strong> 🎉<br>
+  Free <strong>v0.3 activation key</strong> when it ships 🎉
 </h3>
 
 <p align="center">
-  v0.2 计划新增：<br>
+  ✅ <strong>v0.2 已上线（2026-05-03）</strong>：<br>
+  🧠 <strong>1D-CNN + Transformer 混合架构</strong> — 系统按数据自动推荐 CNN / 混合，多通道长序列效果更好
+</p>
+
+<p align="center">
+  v0.3 计划新增：<br>
   🔥 <strong>Grad-CAM 热力图</strong> — 看模型到底学到了什么<br>
   📦 <strong>ONNX / TorchScript 导出</strong> — 把模型嵌入到 C++ / 移动端<br>
-  🧠 <strong>1D-CNN + Transformer 混合架构</strong> — 系统按数据自动推荐 CNN / 混合，多通道长序列效果更好
+  📊 <strong>GroupKFold 交叉验证</strong> — 论文级 mean ± std macro-F1
 </p>
 
 <p align="center">
   <sub>
     ⚠️ <strong>别忘了备注邮箱！</strong>没有邮箱我没法找到你哦。<br>
-    ⚠️ <strong>Don't forget the email!</strong> Without it, I can't reach you when v0.2 ships.
+    ⚠️ <strong>Don't forget the email!</strong> Without it, I can't reach you when v0.3 ships.
   </sub>
 </p>
 
@@ -91,8 +96,8 @@ BioSpark-Light is the **standalone desktop spin-off** of [BioSpark](https://gith
   <sub>
     💡 作者目前是个独立开发者，所有时间都来自周末和深夜。<br>
     💡 The author is an indie dev — all this work comes from weekends and late nights.<br>
-    一杯咖啡的鼓励，就是把 v0.2 提前几天的最大动力。<br>
-    A coffee's worth of encouragement is what brings v0.2 forward by days.
+    一杯咖啡的鼓励，就是把 v0.3 提前几天的最大动力。<br>
+    A coffee's worth of encouragement is what brings v0.3 forward by days.
   </sub>
 </p>
 
@@ -234,6 +239,8 @@ DATABASE_URL="sqlite+aiosqlite:///./test.db" python launcher.py
 - [x] Publication-quality figure export
 - [x] System tray + auto-open browser
 - [x] PyInstaller one-folder bundle (no Python install required) — see [docs/BUILD.md](docs/BUILD.md)
+- [x] **v0.2 (2026-05-03)**: 1D-CNN + Transformer hybrid architecture + auto-recommendation
+- [ ] **v0.3**: Grad-CAM heatmap · ONNX / TorchScript export · GroupKFold cross-validation
 - [ ] Auto-update channel
 - [ ] Optional license-gated features
 

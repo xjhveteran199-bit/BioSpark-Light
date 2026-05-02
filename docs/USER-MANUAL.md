@@ -1,6 +1,6 @@
 # BioSpark-Light 用户手册
 
-> **文档版本**:对应 BioSpark-Light v0.1.1
+> **文档版本**:对应 BioSpark-Light v0.2.0
 > **适用对象**:第一次拿到 BioSpark-Light 想完整跑通"从原始数据到训练好的模型"的所有人。
 > **English version**: see [USER-MANUAL.en.md](USER-MANUAL.en.md).
 
@@ -703,5 +703,5 @@ WANG-DAY1-CLENCH.txt → CLENCH
 
 ---
 
-*BioSpark-Light · v0.1.1 · 用户手册 · 编制于 2026-04-30*
+*BioSpark-Light · v0.2.0 · 用户手册 · v0.2 更新于 2026-05-03*
 *本手册由 xjhveteran199-bit 与 Claude Opus 4.7 结对编写;真实使用案例(§8)的数据来自受试者 LIU 的 5 手势 OpenBCI Cyton 采集。*

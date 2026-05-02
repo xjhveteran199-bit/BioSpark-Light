@@ -28,7 +28,7 @@ from backend.routers import model_history as model_history_router
 from backend.routers import prep as prep_router
 from backend.routers import training as training_router
 
-VERSION = "0.1.0-light"
+VERSION = "0.2.0-light"
 
 _log = logging.getLogger("biospark.startup")
 

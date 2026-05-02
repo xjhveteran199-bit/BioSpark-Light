@@ -109,8 +109,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     log.info("BioSpark-Light is free & offline. If it saves you time,")
     log.info("consider buying the author a coffee — see the in-app modal,")
     log.info("or scan the QR in README.md.")
-    log.info("v0.2 roadmap: Grad-CAM · ONNX export · 1D-CNN + Transformer hybrid.")
-    log.info("Tip ≥¥10 with your email noted → free v0.2 activation key.")
+    log.info("v0.2: 1D-CNN + Transformer hybrid architecture + auto-recommendation.")
+    log.info("v0.3 roadmap: Grad-CAM · ONNX export · GroupKFold cross-validation.")
+    log.info("Tip ≥¥10 with your email noted → free activation key for future releases.")
     log.info("─" * 64)
 
     # Server thread
