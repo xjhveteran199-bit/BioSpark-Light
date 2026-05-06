@@ -13,7 +13,19 @@ We use one-folder mode (not --onefile) because:
 Output is ~600 MB-1 GB depending on torch build (CPU-only is leaner).
 """
 
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+
+# Anchor pathex on the spec file's directory so PyInstaller picks up THIS
+# checkout's source (e.g. when building from a git worktree), regardless of
+# what `cwd` or `sys.path` happens to contain. We prepend to sys.path so the
+# modulegraph resolves `backend.*` from this checkout first, even when a
+# parallel checkout exists elsewhere on disk and somehow ended up on sys.path.
+_SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+if _SPEC_DIR not in sys.path:
+    sys.path.insert(0, _SPEC_DIR)
 
 # ---- Heavy frameworks: pull in everything (binaries, data, hidden imports) ----
 torch_datas, torch_binaries, torch_hiddenimports = collect_all("torch")
@@ -23,8 +35,10 @@ matplotlib_datas, matplotlib_binaries, matplotlib_hiddenimports = collect_all("m
 
 # ---- App data: ship the entire frontend folder next to the exe ----
 # Path inside bundle: BioSpark-Light/_internal/frontend/
+# Source path is absolute (anchored on spec dir) so we always grab THIS
+# checkout's frontend, not whatever was in cwd or some other tree.
 app_datas = [
-    ("frontend", "frontend"),
+    (os.path.join(_SPEC_DIR, "frontend"), "frontend"),
 ]
 
 # ---- Hidden imports that PyInstaller can't infer ----
@@ -65,8 +79,8 @@ extra_hidden = [
 ]
 
 a = Analysis(
-    ["launcher.py"],
-    pathex=["."],
+    [os.path.join(_SPEC_DIR, "launcher.py")],
+    pathex=[_SPEC_DIR],
     binaries=torch_binaries + sklearn_binaries + scipy_binaries + matplotlib_binaries,
     datas=(
         app_datas
@@ -119,7 +133,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon="frontend/assets/icon.ico",
+    icon=os.path.join(_SPEC_DIR, "frontend", "assets", "icon.ico"),
 )
 
 coll = COLLECT(

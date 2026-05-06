@@ -53,6 +53,9 @@
             </button>
         </div>
 
+        <!-- License status banner — rendered by License.init() -->
+        <div id="license-banner" class="license-banner hidden"></div>
+
         <!-- ═══════════════ DATA PREP MODE (default) ═══════════════ -->
         <div id="prep-mode">
 
@@ -71,25 +74,25 @@
                     <div class="mode-card prep-mode-card" data-prep-mode="A" onclick="Prep.selectMode('A')">
                         <strong data-en="Mode A — Folder per class" data-zh="模式 A — 每文件夹一个类别">Mode A — Folder per class</strong>
                         <p style="font-size:0.85rem;color:#64748b;margin:0.5rem 0 0;"
-                           data-en="ZIP with class_name/recording.csv. Each CSV is one long recording; folder name is the label."
-                           data-zh="ZIP 内 class_name/recording.csv 结构。每个 CSV 是一段长录制，文件夹名即标签。">
-                            ZIP with class_name/recording.csv.
+                           data-en="ZIP with class_name/recording.{csv,txt}. Each file is one long recording (CSV or OpenBCI .txt); folder name is the label."
+                           data-zh="ZIP 内 class_name/recording.{csv,txt} 结构。每个文件是一段长录制（支持 CSV 与 OpenBCI .txt），文件夹名即标签。">
+                            ZIP with class_name/recording.{csv,txt}.
                         </p>
                     </div>
                     <div class="mode-card prep-mode-card" data-prep-mode="B" onclick="Prep.selectMode('B')">
-                        <strong data-en="Mode B — CSV + intervals" data-zh="模式 B — CSV + 时间区间">Mode B — CSV + intervals</strong>
+                        <strong data-en="Mode B — CSV/TXT + intervals" data-zh="模式 B — CSV/TXT + 时间区间">Mode B — CSV/TXT + intervals</strong>
                         <p style="font-size:0.85rem;color:#64748b;margin:0.5rem 0 0;"
-                           data-en="A single long CSV plus a table of [start_sec, end_sec, label] rows."
-                           data-zh="一个长 CSV + 一份 [起始秒, 结束秒, 标签] 列表。">
-                            A single long CSV plus a table of intervals.
+                           data-en="A single long CSV or OpenBCI .txt plus a table of [start_sec, end_sec, label] rows."
+                           data-zh="一个长 CSV 或 OpenBCI .txt + 一份 [起始秒, 结束秒, 标签] 列表。">
+                            A single long CSV or OpenBCI .txt plus a table of intervals.
                         </p>
                     </div>
                     <div class="mode-card prep-mode-card" data-prep-mode="C" onclick="Prep.selectMode('C')">
                         <strong data-en="Mode C — Generic ZIP" data-zh="模式 C — 通用 ZIP">Mode C — Generic ZIP</strong>
                         <p style="font-size:0.85rem;color:#64748b;margin:0.5rem 0 0;"
-                           data-en="Any ZIP of CSVs. You manually map each file to a class label."
-                           data-zh="任意 CSV 压缩包。你手动指定每个文件对应的类别。">
-                            Any ZIP of CSVs.
+                           data-en="Any ZIP of CSV/TXT files (incl. OpenBCI .txt). You manually map each file to a class label."
+                           data-zh="任意 CSV/TXT 压缩包（含 OpenBCI .txt）。你手动指定每个文件对应的类别。">
+                            Any ZIP of CSV/TXT files.
                         </p>
                     </div>
                 </div>
@@ -206,9 +209,9 @@
         <section id="train-upload-section" class="card">
             <h2 data-en="T1. Upload Labeled Dataset" data-zh="T1. 上传标注数据集">T1. Upload Labeled Dataset</h2>
             <p class="section-hint"
-               data-en="Upload a CSV file with a <code>label</code> column, or a ZIP archive with one folder per class. Or jump back to <strong>Data Prep</strong> to generate one."
-               data-zh="上传含 <code>label</code> 列的 CSV 文件，或按类别分文件夹的 ZIP 压缩包。或回到 <strong>数据整理</strong> 生成。">
-                Upload a CSV file with a <code>label</code> column, or a ZIP archive with one folder per class.
+               data-en="Upload a CSV/TXT file with a <code>label</code> column, or a ZIP archive with one folder per class. Or jump back to <strong>Data Prep</strong> to generate one."
+               data-zh="上传含 <code>label</code> 列的 CSV/TXT 文件，或按类别分文件夹的 ZIP 压缩包。或回到 <strong>数据整理</strong> 生成。">
+                Upload a CSV/TXT file with a <code>label</code> column, or a ZIP archive with one folder per class.
             </p>
 
             <div id="train-drop-zone" class="drop-zone" onclick="Trainer.openFilePicker()">
@@ -223,9 +226,9 @@
                    data-zh='拖拽数据集到此处，或 <span class="browse-link">点击选择</span>'>
                     Drag & drop your dataset here, or <span class="browse-link">browse</span>
                 </p>
-                <p class="hint" data-en="CSV (with label column) &nbsp;·&nbsp; ZIP &nbsp;·&nbsp; Max 200 MB"
-                   data-zh="CSV (含 label 列) &nbsp;·&nbsp; ZIP &nbsp;·&nbsp; 最大 200MB">
-                    CSV / ZIP · Max 200 MB
+                <p class="hint" data-en="CSV/TXT (with label column) &nbsp;·&nbsp; ZIP &nbsp;·&nbsp; Max 200 MB"
+                   data-zh="CSV/TXT (含 label 列) &nbsp;·&nbsp; ZIP &nbsp;·&nbsp; 最大 200MB">
+                    CSV/TXT / ZIP · Max 200 MB
                 </p>
                 <input type="file" id="train-file-input" accept=".csv,.txt,.zip" hidden>
             </div>
@@ -482,17 +485,53 @@
         </p>
     </footer>
 
+    <!-- ═══════════════ LICENSE PAYWALL MODAL ═══════════════ -->
+    <div id="license-modal" class="license-modal hidden" onclick="License.handleBackdropClick(event)">
+        <div class="license-modal-card" onclick="event.stopPropagation()">
+            <h2 class="license-modal-title"
+                data-en="🔒 Trial Ended"
+                data-zh="🔒 试用次数已用完">🔒 Trial Ended</h2>
+            <p class="license-modal-lead"
+               data-en="You've used all 5 free training runs. Activate a license key to continue using BioSpark-Light."
+               data-zh="您已用完全部 5 次免费训练机会。请激活授权码以继续使用 BioSpark-Light。">
+                You've used all 5 free training runs. Activate a license key to continue.
+            </p>
+
+            <div class="license-get-key-row">
+                <p class="license-get-key-hint"
+                   data-en="Don't have a key yet? Tip ≥ ¥10 + leave your email → get an activation key for this version <em>now</em>, plus an invite code for the next version when it ships."
+                   data-zh="还没有激活码？打赏 ≥ ¥10 并备注邮箱 → <em>立即</em>获得当前版本激活码，下个版本发布时再额外赠送邀请码。">
+                    Don't have a key yet? Tip ≥ ¥10 + leave your email → get a key now + invite for next version.
+                </p>
+                <button class="btn secondary" style="white-space:nowrap;"
+                        onclick="Donate.open(); License.closeModal();"
+                        data-en="☕ Get a Key" data-zh="☕ 获取授权码">☕ Get a Key</button>
+            </div>
+
+            <div class="license-key-section">
+                <label class="license-key-label"
+                       data-en="Enter your license key:" data-zh="输入激活码：">Enter your license key:</label>
+                <input type="text" id="license-key-input" class="license-key-input"
+                       placeholder="BSL2-..." autocomplete="off" spellcheck="false">
+                <div id="license-activate-msg" class="license-activate-msg hidden"></div>
+                <button class="btn primary" style="margin-top:0.75rem;width:100%;"
+                        onclick="License.activate()"
+                        data-en="Activate" data-zh="激活">Activate</button>
+            </div>
+        </div>
+    </div>
+
     <!-- ═══════════════ DONATE / SUPPORT MODAL ═══════════════ -->
     <div id="donate-modal" class="donate-modal hidden" onclick="Donate.handleBackdropClick(event)">
         <div class="donate-modal-card" onclick="event.stopPropagation()">
             <button class="donate-close-btn" onclick="Donate.close()" aria-label="Close">×</button>
             <h2 class="donate-title"
-                data-en="☕ BioSpark-Light is free"
-                data-zh="☕ BioSpark-Light 永久免费">☕ BioSpark-Light is free</h2>
+                data-en="☕ 5 free trials · Continue with a key"
+                data-zh="☕ 5 次免费试用 · 长期使用需激活">☕ 5 free trials · Continue with a key</h2>
             <p class="donate-lead"
-               data-en="No ads, no telemetry, no signup. If it saved you time, consider buying the author a coffee — every coffee literally pays for the next feature."
-               data-zh="无广告、无埋点、无需注册。如果它帮你省下了时间，请作者喝杯咖啡 —— 每一杯咖啡都直接变成下一个新功能。">
-                No ads, no telemetry, no signup. If it saved you time, consider buying the author a coffee.
+               data-en="No ads, no telemetry, no signup. After your 5 free training runs, a one-time tip ≥ ¥10 + your email gets you an activation key — your work then runs unlimited and fully offline."
+               data-zh="无广告、无埋点、无需注册。5 次免费训练用完后，一次性打赏 ≥ ¥10 并备注邮箱即可获得激活码 —— 之后无限次使用、完全离线运行。">
+                No ads, no telemetry, no signup. After 5 free runs, tip ≥ ¥10 + email = activation key (unlimited, offline).
             </p>
 
             <div class="donate-qr-grid">
@@ -529,13 +568,13 @@
                 </div>
                 <div class="donate-perk-arrow">↓</div>
                 <div class="donate-perk-reward"
-                     data-en='Free <strong>v0.3</strong> activation key (planned: <em>Grad-CAM · ONNX export · GroupKFold CV</em>) when it ships. v0.2 is here: <em>1D-CNN + Transformer hybrid + auto-recommendation</em>!'
-                     data-zh='等 <strong>v0.3</strong> 上线后免费送你激活码（计划新增：<em>Grad-CAM 热力图 · ONNX 导出 · GroupKFold 交叉验证</em>）。v0.2 已上线：<em>1D-CNN + Transformer 混合架构 + 自动推荐</em>！'>
-                    Free v0.3 activation key when it ships. v0.2 is here!
+                     data-en='<strong>1.</strong> Activation key for <strong>this version (v0.2)</strong> — sent to your email within 24 h, unlocks the trial limit immediately.<br><strong>2.</strong> Invite code for <strong>v0.3</strong> when it ships (planned: <em>Grad-CAM · ONNX export · GroupKFold CV</em>) — priority download access.'
+                     data-zh='<strong>① 当前版本（v0.2）激活码</strong> —— 24 小时内发到邮箱，立即解除 5 次试用限制。<br><strong>② 下个版本（v0.3）邀请码</strong> —— 上线时再发一次（计划新增：<em>Grad-CAM 热力图 · ONNX 导出 · GroupKFold 交叉验证</em>），优先下载。'>
+                    1. Activation key for v0.2 (within 24 h). 2. Invite code for v0.3 when it ships.
                 </div>
                 <div class="donate-perk-foot"
-                     data-en="⚠️ Don't forget the email — without it, I can't reach you when v0.3 ships."
-                     data-zh="⚠️ 别忘了备注邮箱 —— 不然 v0.3 上线我没法找到你哦">
+                     data-en="⚠️ Don't forget the email — without it, I can't deliver either reward."
+                     data-zh="⚠️ 一定要备注邮箱 —— 没有邮箱激活码和邀请码都送不出去哦">
                     ⚠️ Don't forget the email!
                 </div>
             </div>
@@ -558,6 +597,7 @@
     <script src="js/prep.js?v=2"></script>
     <script src="js/my_models.js?v=2"></script>
     <script src="js/donate.js?v=2"></script>
+    <script src="js/license.js?v=1"></script>
     <script src="js/app.js?v=2"></script>
     <script>
         document.getElementById('cfg-auto-mode')?.addEventListener('change', function() {

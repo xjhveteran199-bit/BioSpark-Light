@@ -2403,3 +2403,153 @@ footer {
     user-select: none;
 }
 .donate-dont-show input { cursor: pointer; }
+
+/* ─── License Banner ─────────────────────────────────────────── */
+.license-banner {
+    padding: 0.45rem 1.5rem;
+    font-size: 0.82rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+    position: relative;
+    z-index: 10;
+}
+.license-banner--trial {
+    background: rgba(245, 158, 11, 0.10);
+    color: #fbbf24;
+    border-bottom-color: rgba(245, 158, 11, 0.25);
+}
+.license-banner--licensed {
+    background: rgba(16, 185, 129, 0.10);
+    color: #34d399;
+    border-bottom-color: rgba(16, 185, 129, 0.25);
+}
+.license-banner--expired {
+    background: rgba(239, 68, 68, 0.12);
+    color: #f87171;
+    border-bottom-color: rgba(239, 68, 68, 0.25);
+}
+.license-banner-link {
+    color: inherit;
+    text-decoration: underline;
+    opacity: 0.85;
+    cursor: pointer;
+}
+.license-banner-link:hover { opacity: 1; }
+
+/* ─── License Paywall Modal ──────────────────────────────────── */
+.license-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.82);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10001;
+    padding: 1.5rem;
+    animation: donate-fade-in 0.2s ease-out;
+}
+.license-modal.hidden { display: none; }
+
+.license-modal-card {
+    background: linear-gradient(160deg, #1e1b4b 0%, #1e293b 60%, #312e81 100%);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 20px;
+    padding: 2rem 2.25rem;
+    width: 100%;
+    max-width: 480px;
+    color: var(--text);
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6),
+                0 0 60px rgba(239, 68, 68, 0.10);
+    animation: donate-pop-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.license-modal-title {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+    color: #f87171;
+}
+
+.license-modal-lead {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin-bottom: 1.25rem;
+}
+
+.license-get-key-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.license-get-key-hint {
+    flex: 1;
+    font-size: 0.83rem;
+    color: #fbbf24;
+    line-height: 1.45;
+    margin: 0;
+}
+
+.license-key-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.license-key-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.license-key-input {
+    width: 100%;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.88rem;
+    font-family: 'Courier New', monospace;
+    padding: 0.6rem 0.8rem;
+    outline: none;
+    transition: border-color 0.15s;
+    letter-spacing: 0.02em;
+}
+.license-key-input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+.license-key-input::placeholder { color: #475569; }
+
+.license-activate-msg {
+    font-size: 0.83rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    line-height: 1.4;
+}
+.license-activate-msg.hidden { display: none; }
+.license-msg-success {
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.license-msg-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.license-msg-info {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+}

@@ -15,10 +15,11 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy import text
 
 from backend.config import FRONTEND_DIR, USER_DATA_DIR
@@ -27,6 +28,7 @@ from backend.routers import figures as figures_router
 from backend.routers import model_history as model_history_router
 from backend.routers import prep as prep_router
 from backend.routers import training as training_router
+from backend.services.license import license_service
 
 VERSION = "0.2.0-light"
 
@@ -71,6 +73,25 @@ app.add_middleware(
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": VERSION, "data_dir": str(USER_DATA_DIR)}
+
+
+# ─── License endpoints ──────────────────────────────────────────────────────
+
+@app.get("/api/license/status")
+def license_status():
+    return license_service.get_status()
+
+
+class _ActivateRequest(BaseModel):
+    key: str
+
+
+@app.post("/api/license/activate")
+def license_activate(req: _ActivateRequest):
+    result = license_service.activate(req.key.strip())
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
 
 
 app.include_router(prep_router.router, prefix="/api", tags=["DataPrep"])

@@ -63,7 +63,7 @@ const Trainer = (() => {
     async function handleFile(file) {
         const ext = file.name.split('.').pop().toLowerCase();
         if (!['csv', 'txt', 'zip'].includes(ext)) {
-            _setStatus('train-upload-status', 'error', `Unsupported format ".${ext}". Use .csv or .zip`);
+            _setStatus('train-upload-status', 'error', `Unsupported format ".${ext}". Use .csv, .txt or .zip`);
             return;
         }
         _setStatus('train-upload-status', 'loading', `<span class="spinner"></span>Parsing dataset…`);

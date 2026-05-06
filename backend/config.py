@@ -52,6 +52,12 @@ CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
 # Default DB path — used by database.py if DATABASE_URL not set
 DB_FILE = USER_DATA_DIR / "biospark.db"
 
+# License state file
+LICENSE_FILE = USER_DATA_DIR / "license.json"
+
+# Number of free training runs before the user must activate a license
+TRIAL_RUNS_LIMIT = 5
+
 # Server (loopback only — desktop app, never expose externally)
 HOST = "127.0.0.1"
 PORT = 8765

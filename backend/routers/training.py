@@ -24,6 +24,7 @@ from backend.database import async_session
 from backend.models.training_history import ModelCheckpoint, TrainingRun
 from backend.services.dataset_loader import load_labeled_dataset
 from backend.services import dataset_cache
+from backend.services.license import license_service
 
 # Single-user local app — every job is scoped to this sentinel uid.
 _DEFAULT_USER_ID = 0
@@ -344,6 +345,14 @@ async def start_training(req: TrainStartRequest):
     Start a training job. Single-user local mode — always uses
     user_id=_DEFAULT_USER_ID for warm-start chain bookkeeping.
     """
+    # License gate: check trial/paid status before consuming resources.
+    ok, msg = license_service.check_can_train()
+    if not ok:
+        raise HTTPException(
+            status_code=402,
+            detail={"message": msg, "paywall": True},
+        )
+
     entry = _dataset_cache.get(req.dataset_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Dataset not found. Upload first.")
@@ -411,6 +420,9 @@ async def start_training(req: TrainStartRequest):
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to start training: {exc}")
+
+    # Deduct one trial run now that the job has been accepted.
+    license_service.record_run()
 
     return {
         "job_id": job_id,

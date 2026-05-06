@@ -77,7 +77,7 @@ const Prep = (() => {
         const hint = document.getElementById('prep-upload-hint');
         if (hint) {
             const map = {
-                A: '(.zip with class folders)', B: '(.csv long recording)', C: '(.zip of CSVs)',
+                A: '(.zip with class folders)', B: '(.csv/.txt long recording)', C: '(.zip of .csv/.txt)',
             };
             hint.textContent = map[m] || '';
         }
@@ -113,8 +113,8 @@ const Prep = (() => {
         }
         if (mode === 'B' && !(ext === 'csv' || ext === 'txt')) {
             _setStatus('prep-upload-status', 'error', isZh
-                ? `模式 B 需要 .csv 文件（当前为 .${ext}）。`
-                : `Mode B expects a .csv file (got .${ext}).`);
+                ? `模式 B 需要 .csv 或 .txt 文件（当前为 .${ext}）。`
+                : `Mode B expects a .csv or .txt file (got .${ext}).`);
             return;
         }
         pendingFile = file;

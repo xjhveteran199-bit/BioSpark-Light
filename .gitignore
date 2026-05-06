@@ -38,3 +38,6 @@ data/
 # Local secrets / overrides
 .env
 .env.local
+
+# Developer tools — SMTP credentials (never commit)
+tools/smtp_config.json

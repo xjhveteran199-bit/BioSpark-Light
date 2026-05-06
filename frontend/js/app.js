@@ -21,6 +21,7 @@ const App = {
         if (window.Prep) Prep.init();
         if (window.MyModels) MyModels.init();
         if (window.Donate) Donate.init();
+        if (window.License) License.init();
 
         // Detect browser language; remember user's manual choice in localStorage
         const stored = localStorage.getItem('biospark-lang');
@@ -62,6 +63,7 @@ const App = {
         this.lang = this.lang === 'en' ? 'zh' : 'en';
         localStorage.setItem('biospark-lang', this.lang);
         this.applyLang();
+        if (window.License) License._renderBanner();
     },
 
     applyLang() {
