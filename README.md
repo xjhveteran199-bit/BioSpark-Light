@@ -7,6 +7,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=flat-square&logo=fastapi)]()
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?style=flat-square&logo=pytorch)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)]()
+[![Downloads](https://img.shields.io/github/downloads/xjhveteran199-bit/BioSpark-Light/total?style=flat-square&logo=github&label=downloads)](https://github.com/xjhveteran199-bit/BioSpark-Light/releases)
 
 BioSpark-Light is the **standalone desktop spin-off** of [BioSpark](https://github.com/) — same training engine, same publication-quality figures, but stripped of the cloud-only bits (auth, inference API, real-time streaming) and packaged to run as `python launcher.py` on your laptop.
 
